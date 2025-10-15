@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>BabyPhone – Viewer</title>
+  <link rel="stylesheet" href="/styles.css"/>
+</head>
+<body>
+  <header>
+    <div>👶 BabyPhone <span class="badge">Viewer</span></div>
+    <a class="btn secondary" href="/">Accueil</a>
+  </header>
+  <main class="wrap">
+    <div class="card">
+      <div class="grid">
+        <button id="joinBtn" class="btn">Se connecter</button>
+        <button id="leaveBtn" class="btn secondary" disabled>Se déconnecter</button>
+      </div>
+
+      <div class="container" style="margin-top:12px;">
+        <video id="remote" autoplay playsinline></video>
+        <div id="playOverlay" class="overlay"><button id="playBtn" class="btn">Play</button></div>
+        <button id="fsBtn" class="btn fullscreen-btn">Plein écran</button>
+      </div>
+    </div>
+  </main>
+  <script src="/client.js"></script>
+  <script>window.APP_ROLE='viewer';</script>
+  <script>window.initBabyPhone({ role: window.APP_ROLE });</script>
+</body>
+</html>

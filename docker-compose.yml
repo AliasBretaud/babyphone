@@ -1,0 +1,30 @@
+services:
+  certgen:
+    build: .
+    command: ["/app/bin/generate-certs.sh"]
+    environment:
+      - CERT_DIR=/app/certs
+      # Space-separated list of hostnames/IPs for certificate SANs.
+      # Override from CLI if needed: CERT_HOSTNAMES="localhost 127.0.0.1 192.168.1.23 baby.local"
+      - CERT_HOSTNAMES=localhost 127.0.0.1 192.168.1.9
+    volumes:
+      - certs:/app/certs
+
+  babyphone:
+    build: .
+    container_name: babyphone
+    restart: unless-stopped
+    depends_on:
+      - certgen
+    ports:
+      - "3000:3000" # HTTP redirector -> HTTPS
+      - "3443:3443" # HTTPS
+    environment:
+      - NODE_ENV=production
+      - CERT_DIR=/app/certs
+    volumes:
+      - certs:/app/certs
+    command: ["node", "server_https.js"]
+
+volumes:
+  certs:
