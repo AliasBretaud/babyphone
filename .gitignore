@@ -146,3 +146,20 @@ certs/
 *.crt
 *.pem
 *.p12
+
+# Python environments / cache
+.venv/
+venv/
+ENV/
+env/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+pip-wheel-metadata/
+python_analyzer/output/
+python_analyzer/.venv/
+python_analyzer/venv/
+python_analyzer/env/
+python_analyzer/__pycache__/
+python_analyzer/**/*.pyc

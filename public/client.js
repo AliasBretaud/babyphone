@@ -44,7 +44,11 @@
       this.ws = setupWebSocket(room, "broadcaster");
       this.ws.onmessage = (ev) => this.onWS(JSON.parse(ev.data));
       this.stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
+        video: {
+          width: { ideal: 1920, max: 3840 },
+          height: { ideal: 1080, max: 2160 },
+          frameRate: { ideal: 30, max: 60 },
+        },
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
@@ -91,7 +95,16 @@
       const pc = new RTCPeerConnection({ iceServers: ICE });
       this.stream
         .getTracks()
-        .forEach((track) => pc.addTrack(track, this.stream));
+        .forEach((track) => {
+          const sender = pc.addTrack(track, this.stream);
+          if (track.kind === "video") {
+            const params = sender.getParameters();
+            params.encodings = params.encodings || [{}];
+            params.encodings[0].maxBitrate = 4_000_000; // ~4 Mbps
+            params.encodings[0].maxFramerate = 60;
+            sender.setParameters(params).catch(() => {});
+          }
+        });
       pc.onicecandidate = (e) => {
         if (e.candidate)
           this.ws.send(
