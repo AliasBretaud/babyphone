@@ -113,11 +113,10 @@ class AudioAnalyzer:
 
     def process_frame(self, frame) -> Optional[CryEvent]:
 
-        pcm = frame.to_ndarray(format="s16")
-        if pcm.ndim == 2:
-            pcm = pcm.mean(axis=0).astype(np.int16)
-        else:
-            pcm = pcm.flatten()
+        array = frame.to_ndarray()
+        if array.ndim > 1:
+            array = array.mean(axis=0)
+        pcm = np.round(array).astype(np.int16)
 
         if pcm.size == 0:
             return None

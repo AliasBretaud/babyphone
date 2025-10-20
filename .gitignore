@@ -158,6 +158,7 @@ env/
 *.pyd
 pip-wheel-metadata/
 python_analyzer/output/
+python_analyzer/models/
 python_analyzer/.venv/
 python_analyzer/venv/
 python_analyzer/env/

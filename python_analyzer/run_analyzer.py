@@ -5,7 +5,7 @@ import logging
 import os
 import signal
 import threading
-from typing import Iterable, Sequence
+from typing import Sequence
 
 from baby_monitor import AnalyzerClient, AnalyzerConfig
 

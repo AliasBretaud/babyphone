@@ -12,7 +12,9 @@ Cette application Python se connecte au serveur BabyPhone via WebRTC pour analys
   - `mouvement` – bébé allongé qui bouge sensiblement.
   - `assis` – bébé redressé (torse quasi vertical).
   - `debout` – posture verticale stable.
-- Analyse audio: détection heuristique de pleurs avec enregistrement WAV optionnel.
+- Détection des pleurs (analyse audio heuristique).
+- Détection des mouvements du bébé (changement de position notable).
+- Détection du réveil (position assise ou debout maintenue ≥ 3 s).
 - Snapshots de debug annotés (landmarks MediaPipe) configurables.
 - Logs structurés des événements détectés.
 
@@ -46,7 +48,7 @@ python run_analyzer.py \
   --room baby \
   --no-ssl-verify \
   --record-audio \
-  --snapshot-interval 2
+  --snapshots
 ```
 
 Arguments principaux :
@@ -56,10 +58,12 @@ Arguments principaux :
 - `--ssl-verify/--no-ssl-verify` : active/désactive la vérification TLS (utile avec certificats auto-signés du projet).
 - `--audio-dir` : dossier de sortie pour l'enregistrement audio (`python_analyzer/output` par défaut).
 - `--record-audio / --no-record-audio` : activer ou non la sauvegarde du flux audio en WAV (désactivé par défaut).
-- `--snapshot-interval` : intervalle (en secondes) pour générer des captures annotées (0 = désactivé).
+- `--snapshots / --no-snapshots` : activer les captures annotées à chaque événement détecté (mouvement ou réveil).
 - `--snapshot-dir` : dossier de sortie des captures annotées (défaut `python_analyzer/output/snapshots`).
 
-Le script se connecte, attend un broadcaster et consomme le flux média. Les événements sont affichés dans la console. Si `--record-audio` est activé, un fichier `output/baby_audio_<horodatage>.wav` est écrit. Avec `--snapshot-interval`, des captures annotées des landmarks sont déposées dans `snapshot-dir`.
+Le script se connecte, attend un broadcaster et consomme le flux média. Les événements (pleurs, mouvement, réveil) sont affichés dans la console. Si `--record-audio` est activé, un fichier `python_analyzer/output/audio/baby_audio_<horodatage>.wav` est écrit. Avec `--snapshots`, chaque événement génère une image annotée enregistrée dans `snapshot-dir` avec un identifiant de trace commun au log.
+
+> ℹ️ Au premier lancement, le modèle MediaPipe Tasks (`pose_landmarker_full.task`) est téléchargé automatiquement dans `python_analyzer/models/`. Vous pouvez fournir votre propre modèle via la variable d'environnement `POSE_MODEL_PATH`.
 
 ---
 
@@ -100,10 +104,11 @@ Chaque argument CLI possède un équivalent via variables :
 | `ANALYZER_SIGNALING`   | URL WebSocket de signalisation              | `wss://localhost:3443/ws`          |
 | `ANALYZER_ROOM`        | Salle à rejoindre                           | `baby`                             |
 | `ANALYZER_SSL_VERIFY`  | `true` / `false` pour activer TLS strict    | `false`                            |
-| `ANALYZER_AUDIO_DIR`   | Dossier d'enregistrement audio              | `python_analyzer/output`           |
-| `ANALYZER_AUDIO_RECORD`| `true` / `false` pour écrire un WAV         | `false`                            |
-| `ANALYZER_SNAPSHOT_INTERVAL` | Intervalle (s) pour les captures annotées | `0`                            |
-| `ANALYZER_SNAPSHOT_DIR` | Dossier pour les captures annotées         | `python_analyzer/output/snapshots` |
+| `ANALYZER_AUDIO_DIR`        | Dossier d'enregistrement audio            | `python_analyzer/output/audio`     |
+| `ANALYZER_AUDIO_RECORD`     | `true` / `false` pour écrire un WAV       | `false`                            |
+| `ANALYZER_SNAPSHOT_ON_EVENT`| `true` / `false` pour activer les captures| `false`                            |
+| `ANALYZER_SNAPSHOT_DIR`     | Dossier pour les captures annotées        | `python_analyzer/output/snapshots` |
+| `POSE_MODEL_PATH`           | Chemin vers un modèle `.task` personnalisé (facultatif) | _auto-download_ |
 
 ---
 

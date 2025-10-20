@@ -22,11 +22,11 @@ class AnalyzerConfig:
         default_factory=lambda: ["stun:stun.l.google.com:19302"]
     )
     disable_ssl_verify: bool = True
-    audio_output_dir: str = "python_analyzer/output"
+    audio_output_dir: str = "python_analyzer/output/audio"
     record_audio: bool = False
     log_level: str = "INFO"
-    snapshot_interval: float = 0.0  # seconds, 0=disabled
-    snapshot_dir: str = "python_analyzer/output/snapshots"
+    snapshot_on_event: bool = False
+    snapshot_dir: str = "output/snapshots"
 
     @classmethod
     def from_env(cls) -> "AnalyzerConfig":
@@ -46,8 +46,8 @@ class AnalyzerConfig:
             os.getenv("ANALYZER_AUDIO_RECORD"), default=cfg.record_audio
         )
         cfg.log_level = os.getenv("LOG_LEVEL", cfg.log_level).upper()
-        cfg.snapshot_interval = float(
-            os.getenv("ANALYZER_SNAPSHOT_INTERVAL", cfg.snapshot_interval)
+        cfg.snapshot_on_event = _parse_bool(
+            os.getenv("ANALYZER_SNAPSHOT_ON_EVENT"), default=cfg.snapshot_on_event
         )
         cfg.snapshot_dir = os.getenv("ANALYZER_SNAPSHOT_DIR", cfg.snapshot_dir)
         return cfg
@@ -113,16 +113,24 @@ class AnalyzerConfig:
             help="Niveau de log (DEBUG, INFO, WARNING...)",
         )
         parser.add_argument(
-            "--snapshot-interval",
-            type=float,
-            default=env_cfg.snapshot_interval,
-            help="Intervalle (en secondes) pour enregistrer des captures annotées (0 pour désactiver)",
-        )
-        parser.add_argument(
             "--snapshot-dir",
             default=env_cfg.snapshot_dir,
             help="Dossier où stocker les captures annotées",
         )
+        snapshot_group = parser.add_mutually_exclusive_group()
+        snapshot_group.add_argument(
+            "--snapshots",
+            dest="snapshot_on_event",
+            action="store_true",
+            help="Activer la capture d'images annotées à chaque événement détecté",
+        )
+        snapshot_group.add_argument(
+            "--no-snapshots",
+            dest="snapshot_on_event",
+            action="store_false",
+            help="Désactiver les captures d'images annotées",
+        )
+        parser.set_defaults(snapshot_on_event=env_cfg.snapshot_on_event)
         args = parser.parse_args(argv)
         return cls(
             signaling_url=args.signaling,
@@ -132,6 +140,6 @@ class AnalyzerConfig:
             audio_output_dir=args.audio_dir,
             record_audio=args.record_audio,
             log_level=args.log_level.upper(),
-            snapshot_interval=max(0.0, args.snapshot_interval),
+            snapshot_on_event=args.snapshot_on_event,
             snapshot_dir=args.snapshot_dir,
         )

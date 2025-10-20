@@ -8,6 +8,7 @@ import ssl
 import time
 from pathlib import Path
 from typing import Optional
+import uuid
 
 import websockets
 from aiortc import (
@@ -39,14 +40,21 @@ class AnalyzerClient:
             config.audio_output_dir, record_audio=config.record_audio
         )
         self._current_posture: Optional[str] = None
-        self._last_movement_ts = 0.0
         self._rejoin_lock = asyncio.Lock()
         self._stop_requested = False
-        self._snapshot_interval = config.snapshot_interval
+        self._snapshot_enabled = config.snapshot_on_event
         self._snapshot_dir = Path(config.snapshot_dir)
-        if self._snapshot_interval > 0:
+        if self._snapshot_enabled:
             self._snapshot_dir.mkdir(parents=True, exist_ok=True)
-        self._last_snapshot_ts = 0.0
+        self._event_cooldown = 2.0
+        self._movement_cooldown = 2.0
+        self._last_event_label: Optional[str] = None
+        self._last_event_ts: float = 0.0
+        self._last_movement_event_ts: float = 0.0
+        self._wake_candidate_posture: Optional[str] = None
+        self._wake_candidate_since: float = 0.0
+        self._wake_min_duration = 3.0
+        self._is_awake: bool = False
 
     async def run(self) -> None:
         """Démarre la boucle de signalisation et reste actif jusqu'à fermeture."""
@@ -273,8 +281,10 @@ class AnalyzerClient:
             if not observation:
                 continue
 
-            self._maybe_save_snapshot(frame_bgr, observation)
-            self._handle_pose_observation(observation)
+            events = self._handle_pose_observation(observation)
+            if self._snapshot_enabled and events:
+                for event in events:
+                    self._save_snapshot(frame_bgr, observation, event)
 
     async def _consume_audio(self, track) -> None:
         frame_count = 0
@@ -310,36 +320,89 @@ class AnalyzerClient:
                     event.ratio_mid_band,
                 )
 
-    def _handle_pose_observation(self, observation) -> None:
+    def _handle_pose_observation(self, observation) -> list[dict]:
+        events: list[dict] = []
         posture = observation.posture
-        if posture in {"standing", "sitting"} and posture != self._current_posture:
-            label = "debout" if posture == "standing" else "assis"
-            logging.info(
-                "Détection posture %s (angle=%.1f°)",
-                label,
-                observation.angle_deg,
-            )
-            self._current_posture = posture
+        now = time.time()
+        extras = observation.extras or {}
+        torso_angle = extras.get("torso_angle")
+        avg_knee = extras.get("avg_knee_angle")
+        leg_ext = extras.get("leg_extension")
+        torso_text = (
+            f"torse={torso_angle:.1f}°" if torso_angle is not None else "torse=n/a"
+        )
+        knee_text = f"{avg_knee:.1f}°" if avg_knee is not None else "n/a"
+        leg_text = f"{leg_ext:.2f}" if leg_ext is not None else "n/a"
 
-        if (
-            posture == "lying"
-            and observation.movement_detected
-            and (time.time() - self._last_movement_ts) > 2.0
-        ):
+        # Movement detection with cooldown
+        if observation.movement_detected and (
+            now - self._last_movement_event_ts
+        ) >= self._movement_cooldown:
+            trace_id = uuid.uuid4().hex[:8]
             logging.info(
-                "Détection mouvement (score=%.3f, angle=%.1f°)",
+                "Trace %s – Movement detected (score=%.3f, posture=%s, %s, genou=%s, jambe=%s)",
+                trace_id,
                 observation.movement_score,
-                observation.angle_deg,
+                posture,
+                torso_text,
+                knee_text,
+                leg_text,
             )
-            self._last_movement_ts = time.time()
-            self._current_posture = "lying"
-        elif posture == "lying":
-            if self._current_posture != "lying":
-                logging.info(
-                    "Posture détectée: bébé couché (angle=%.1f°)",
-                    observation.angle_deg,
-                )
-            self._current_posture = "lying"
+            payload = {
+                "trace_id": trace_id,
+                "label": "movement",
+                "description": "movement",
+                "extras": {
+                    **extras,
+                    "movement_score": observation.movement_score,
+                    "posture": posture,
+                },
+            }
+            if self._register_event(payload, now):
+                events.append(payload)
+                self._last_movement_event_ts = now
+
+        # Wake detection (sitting or standing maintained for >= 3s)
+        if posture in {"sitting", "standing"}:
+            if self._is_awake:
+                self._wake_candidate_posture = None
+            else:
+                if self._wake_candidate_posture != posture:
+                    self._wake_candidate_posture = posture
+                    self._wake_candidate_since = now
+                elif (now - self._wake_candidate_since) >= self._wake_min_duration:
+                    trace_id = uuid.uuid4().hex[:8]
+                    duration = now - self._wake_candidate_since
+                    logging.info(
+                        "Trace %s – Wake detected (posture=%s, durée=%.1fs, %s, genou=%s, jambe=%s)",
+                        trace_id,
+                        posture,
+                        duration,
+                        torso_text,
+                        knee_text,
+                        leg_text,
+                    )
+                    payload = {
+                        "trace_id": trace_id,
+                        "label": "wake",
+                        "description": f"wake ({posture})",
+                        "extras": {
+                            **extras,
+                            "posture": posture,
+                            "duration": duration,
+                        },
+                    }
+                    if self._register_event(payload, now):
+                        events.append(payload)
+                        self._is_awake = True
+                        self._wake_candidate_posture = None
+        else:
+            self._wake_candidate_posture = None
+            self._wake_candidate_since = 0.0
+            self._is_awake = False
+
+        self._current_posture = posture
+        return events
 
     async def _reset(self) -> None:
         if self._video_task:
@@ -391,24 +454,42 @@ class AnalyzerClient:
         self._pose_analyzer.close()
         self._audio_analyzer.close()
 
-    def _maybe_save_snapshot(self, frame_bgr, observation) -> None:
-        if self._snapshot_interval <= 0:
-            return
+    def _save_snapshot(self, frame_bgr, observation, event: dict) -> None:
         if observation.pose_landmarks is None:
             return
-        now = time.time()
-        if now - self._last_snapshot_ts < self._snapshot_interval:
-            return
-        self._last_snapshot_ts = now
         annotated = self._pose_analyzer.annotate_frame(frame_bgr, observation.pose_landmarks)
         from datetime import datetime
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        filename = self._snapshot_dir / f"snapshot_{timestamp}.jpg"
+        label = event.get("label", "event").replace(" ", "_")
+        trace_id = event.get("trace_id", "trace")
+        filename = self._snapshot_dir / f"snapshot_{timestamp}_{label}_{trace_id}.jpg"
         try:
             import cv2
 
             cv2.imwrite(str(filename), annotated)
-            logging.info("Capture annotée enregistrée: %s", filename)
+            desc = event.get("description") or event.get("label")
+            logging.info(
+                "Trace %s – Capture annotée (%s) enregistrée: %s",
+                trace_id,
+                desc,
+                filename,
+            )
         except Exception:
-            logging.exception("Impossible d'enregistrer la capture annotée")
+            logging.exception(
+                "Trace %s – Impossible d'enregistrer la capture annotée", trace_id
+            )
+
+    def _register_event(self, event: dict, timestamp: float) -> bool:
+        label = event.get("label")
+        if not label:
+            return False
+        if (
+            self._last_event_label == label
+            and (timestamp - self._last_event_ts) < self._event_cooldown
+        ):
+            return False
+        self._last_event_label = label
+        self._last_event_ts = timestamp
+        event.setdefault("extras", {})["event_timestamp"] = timestamp
+        return True
