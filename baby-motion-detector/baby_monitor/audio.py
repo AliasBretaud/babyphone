@@ -19,11 +19,11 @@ class CryEvent:
 
 class CryDetector:
     """
-    Détection simple des pleurs par analyse énergétique + spectrale.
+    Lightweight cry detector relying on energy and spectral ratios.
 
-    Cette heuristique cible les signatures audio typiques des pleurs :
-    énergie élevée, contenu fréquentiel dans la bande 400-1500 Hz et
-    persistance sur quelques fenêtres.
+    The heuristic focuses on the usual cry signature: sustained energy,
+    most of the power located between 400-1500 Hz, and persistence across
+    consecutive windows.
     """
 
     def __init__(
@@ -43,8 +43,7 @@ class CryDetector:
 
     def process_samples(self, samples: np.ndarray) -> Optional[CryEvent]:
         """
-        Ajoute des échantillons (mono, float32) et retourne un CryEvent
-        si un cri est détecté.
+        Append mono float32 samples and return a CryEvent if a cry is detected.
         """
         self._buffer = np.concatenate((self._buffer, samples))
         while self._buffer.size >= self.window_size:
@@ -82,7 +81,7 @@ class CryDetector:
 
 
 class AudioAnalyzer:
-    """Gère l'enregistrement audio (optionnel) et la détection de pleurs."""
+    """Handles optional audio recording and cry detection."""
 
     def __init__(
         self,
@@ -123,7 +122,7 @@ class AudioAnalyzer:
 
         sample_rate = frame.sample_rate
         if self._detector is None:
-            # Initialise le détecteur à la première frame
+            # Lazily create the detector on the first frame
             self._detector = CryDetector(sample_rate)
 
         self.ensure_writer(sample_rate)

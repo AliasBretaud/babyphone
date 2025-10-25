@@ -1,28 +1,26 @@
 # Baby Monitor Analyzer (Python)
 
-Cette application Python se connecte au serveur BabyPhone via WebRTC pour analyser en temps réel la vidéo et l'audio. Elle détecte les mouvements du bébé (mouvement léger, assis, debout) à l'aide d'un modèle de pose pré‑entraîné et signale les pleurs grâce à l'analyse audio tout en enregistrant le flux sonore.
+This Python client connects to the BabyPhone WebRTC server as a viewer, inspects the incoming audio/video tracks, and raises motion/cry events in real time with optional debug snapshots.
+
+> ℹ️ When MediaPipe is not available (e.g., Python 3.12+), the analyzer automatically falls back to an OpenCV-only backend. Motion detection still works, but posture classification (lying/sitting/standing) is disabled.
 
 ---
 
-## Fonctionnalités
+## Features
 
-- Client WebRTC autonome (basé sur `aiortc`) qui rejoint une salle en tant que `viewer`.
-- Signalisation via WebSocket avec possibilité de désactiver la vérification TLS (certificats auto-signés).
-- Analyse vidéo par `MediaPipe Pose` (modèle pré-entrainé) pour classer:
-  - `mouvement` – bébé allongé qui bouge sensiblement.
-  - `assis` – bébé redressé (torse quasi vertical).
-  - `debout` – posture verticale stable.
-- Détection des pleurs (analyse audio heuristique).
-- Détection des mouvements du bébé (changement de position notable).
-- Détection du réveil (position assise ou debout maintenue ≥ 3 s).
-- Snapshots de debug annotés (landmarks MediaPipe) configurables.
-- Logs structurés des événements détectés.
+- Stand-alone WebRTC viewer powered by `aiortc`.
+- WebSocket signaling with optional TLS verification bypass for self-signed certificates.
+- Pose understanding through MediaPipe Pose (lying vs sitting vs standing) when available.
+- Cry detection powered by simple spectral heuristics.
+- Wake-up detection by observing posture changes over time.
+- Optional annotated snapshots for debugging (MediaPipe backend only).
+- Structured logging for all detected events.
 
 ---
 
 ## Installation
 
-1. Créez un virtualenv avec Python 3.10 ou 3.11 (mediapipe ne fournit pas encore de roue pour Python 3.12+) :
+1. Create a virtual environment (Python 3.10 or 3.11 recommended; 3.12+ works in fallback mode):
 
    ```bash
    cd baby-motion-detector
@@ -30,17 +28,17 @@ Cette application Python se connecte au serveur BabyPhone via WebRTC pour analys
    source .venv/bin/activate
    ```
 
-2. Installez les dépendances :
+2. Install the dependencies:
 
    ```bash
    pip install -r requirements.txt
    ```
 
-   > `mediapipe`, `aiortc` et `opencv-python` téléchargent des modèles/prérequis lors de l'installation. Assurez-vous d'avoir une connexion réseau pour la première installation. Si vous voyez une erreur `No matching distribution found for mediapipe`, vérifiez que votre interpréteur est en Python 3.10/3.11.
+   > `mediapipe`, `aiortc`, and `opencv-python` download native wheels and auxiliary files during installation. Make sure you have a network connection the first time you install them. If you see `No matching distribution found for mediapipe`, double-check that your interpreter is Python 3.10/3.11 or stick to the fallback mode.
 
 ---
 
-## Utilisation
+## Usage
 
 ```bash
 python run_analyzer.py \
@@ -51,19 +49,19 @@ python run_analyzer.py \
   --snapshots
 ```
 
-Arguments principaux :
+Key arguments:
 
-- `--signaling` : URL WebSocket du serveur Node (par défaut `wss://localhost:3443/ws`).
-- `--room` : nom de la salle (`baby` par défaut ou `?room=...` côté Web).
-- `--ssl-verify/--no-ssl-verify` : active/désactive la vérification TLS (utile avec certificats auto-signés du projet).
-- `--audio-dir` : dossier de sortie pour l'enregistrement audio (`baby-motion-detector/output/audio` par défaut, créé automatiquement si nécessaire).
-- `--record-audio / --no-record-audio` : activer ou non la sauvegarde du flux audio en WAV (désactivé par défaut).
-- `--snapshots / --no-snapshots` : activer les captures annotées à chaque événement détecté (mouvement ou réveil).
-- `--snapshot-dir` : dossier de sortie des captures annotées (défaut `baby-motion-detector/output/snapshots`).
+- `--signaling`: WebSocket URL of the Node server (default `wss://localhost:3443/ws`).
+- `--room`: room to join (`baby` by default or the `?room=...` you set in the web UI).
+- `--ssl-verify/--no-ssl-verify`: toggle strict TLS verification (keep disabled for self-signed certs).
+- `--audio-dir`: output folder for recorded WAV files (default `baby-motion-detector/output/audio`, created on demand).
+- `--record-audio / --no-record-audio`: enable/disable audio recording (off by default).
+- `--snapshots / --no-snapshots`: enable annotated snapshots for every detected motion/wake event.
+- `--snapshot-dir`: directory for snapshots (default `baby-motion-detector/output/snapshots`).
 
-Le script se connecte, attend un broadcaster et consomme le flux média. Les événements (pleurs, mouvement, réveil) sont affichés dans la console. Si `--record-audio` est activé, un fichier `baby-motion-detector/output/audio/baby_audio_<horodatage>.wav` est écrit. Avec `--snapshots`, chaque événement génère une image annotée enregistrée dans `snapshot-dir` avec un identifiant de trace commun au log.
+The script connects, waits for a broadcaster, consumes the media stream, and logs detected events (cry, movement, wake). When `--record-audio` is enabled, files like `baby-motion-detector/output/audio/baby_audio_<timestamp>.wav` are written. When `--snapshots` is enabled and MediaPipe is available, each event produces an annotated image in `snapshot-dir`. The fallback backend skips posture and snapshots but still reports motion.
 
-> ℹ️ Au premier lancement, le modèle MediaPipe Tasks (`pose_landmarker_full.task`) est téléchargé automatiquement dans `baby-motion-detector/models/`. Vous pouvez fournir votre propre modèle via la variable d'environnement `POSE_MODEL_PATH`.
+> ℹ️ On first launch the MediaPipe Tasks model (`pose_landmarker_full.task`) is downloaded automatically into `baby-motion-detector/models/`. Provide your own model by setting the `POSE_MODEL_PATH` environment variable if needed.
 
 ---
 
@@ -71,57 +69,63 @@ Le script se connecte, attend un broadcaster et consomme le flux média. Les év
 
 ```
 baby-motion-detector/
-├── run_analyzer.py          # Point d'entrée CLI
+├── run_analyzer.py          # CLI entrypoint
 ├── requirements.txt
 └── baby_monitor/
     ├── __init__.py
-    ├── analyzer.py          # Client WebRTC + boucle principale
-    ├── audio.py             # Détection de pleurs (+ enregistrement optionnel)
-    ├── config.py            # Lecture de la configuration (CLI/env)
-    ├── pose.py              # Analyse de pose MediaPipe + classification
-    └── protobuf_compat.py   # Adaptateur protobuf (API non dépréciée)
+    ├── analyzer.py          # WebRTC client + event loops
+    ├── audio.py             # Cry detection + optional recording
+    ├── config.py            # CLI/env configuration loader
+    ├── pose.py              # Pose analysis (MediaPipe or OpenCV fallback)
+    └── protobuf_compat.py   # Protobuf helpers
 ```
 
-### Pipeline vidéo
-1. Réception des frames via `aiortc`.
-2. Passage à `MediaPipe Pose` (modèle pré-entrainé) pour extraire les landmarks 3D.
-3. Classification posture (debout/assis/allongé) via analyse angulaire indépendamment de l'angle caméra.
-4. Détection de mouvement par variation des landmarks.
+### Video pipeline (MediaPipe backend)
+1. Receive frames via `aiortc`.
+2. Run MediaPipe Pose to obtain 3D landmarks.
+3. Classify posture (lying/sitting/standing) using heuristic rules.
+4. Detect movement by comparing landmark deltas.
 
-### Pipeline audio
-1. Conversion PCM mono 16 bits.
-2. Écriture dans un fichier WAV en continu.
-3. Fenêtrage glissant + analyse fréquentielle pour identifier des signatures de pleurs.
+### Video pipeline (fallback backend)
+1. Receive frames via `aiortc`.
+2. Apply frame differencing + smoothing to estimate motion level.
+3. Emit motion events without posture labels.
 
----
-
-## Variables d'environnement
-
-Chaque argument CLI possède un équivalent via variables :
-
-| Variable               | Description                                 | Valeur par défaut                  |
-|------------------------|---------------------------------------------|------------------------------------|
-| `ANALYZER_SIGNALING`   | URL WebSocket de signalisation              | `wss://localhost:3443/ws`          |
-| `ANALYZER_ROOM`        | Salle à rejoindre                           | `baby`                             |
-| `ANALYZER_SSL_VERIFY`  | `true` / `false` pour activer TLS strict    | `false`                            |
-| `ANALYZER_AUDIO_DIR`        | Dossier d'enregistrement audio            | `baby-motion-detector/output/audio` |
-| `ANALYZER_AUDIO_RECORD`     | `true` / `false` pour écrire un WAV       | `false`                            |
-| `ANALYZER_SNAPSHOT_ON_EVENT`| `true` / `false` pour activer les captures| `false`                            |
-| `ANALYZER_SNAPSHOT_DIR`     | Dossier pour les captures annotées        | `baby-motion-detector/output/snapshots` |
-| `POSE_MODEL_PATH`           | Chemin vers un modèle `.task` personnalisé (facultatif) | _auto-download_ |
+### Audio pipeline
+1. Convert PCM frames to mono 16-bit samples.
+2. Optionally write WAV chunks continuously.
+3. Apply sliding window spectral analysis to flag cry-like patterns.
 
 ---
 
-## Limites & pistes d'amélioration
+## Environment Variables
 
-- Les heuristiques de classification et de pleurs peuvent être ajustées selon les caméras/bruits ambiants.
-- Pour une précision accrue, intégrer un modèle audio spécialisé (ex. modèle de classification de cris d'enfant) et/ou un module de suivi multi-caméra.
-- Ajouter des notifications (email, push) en plus des logs console.
+Every CLI flag has an environment counterpart:
+
+| Variable                    | Description                                 | Default value                          |
+|----------------------------|---------------------------------------------|----------------------------------------|
+| `ANALYZER_SIGNALING`       | WebSocket signaling URL                      | `wss://localhost:3443/ws`              |
+| `ANALYZER_ROOM`            | Room to join                                 | `baby`                                 |
+| `ANALYZER_SSL_VERIFY`      | `true` / `false` to enable strict TLS        | `false`                                |
+| `ANALYZER_AUDIO_DIR`       | Audio recording directory                    | `baby-motion-detector/output/audio`    |
+| `ANALYZER_AUDIO_RECORD`    | `true` / `false` to persist WAV files        | `false`                                |
+| `ANALYZER_SNAPSHOT_ON_EVENT` | `true` / `false` to capture annotated shots | `false`                                |
+| `ANALYZER_SNAPSHOT_DIR`    | Snapshot output directory                    | `baby-motion-detector/output/snapshots`|
+| `POSE_MODEL_PATH`          | Custom `.task` model path (optional)         | auto-download                          |
 
 ---
 
-## Développement
+## Limitations & Future Ideas
 
-- Activez le logging détaillé en définissant `LOG_LEVEL=DEBUG`.
-- Les modules sont découplés : vous pouvez tester l'analyse vidéo ou audio indépendamment en simulant des flux.
-- Respectez la licence des modèles utilisés (MediaPipe Pose).
+- Motion/pose heuristics may need adjustments depending on camera angle and lighting.
+- For more accurate crying detection, plug in a dedicated ML model or cloud service.
+- Consider adding notifications (email, push) when wake/cry events occur.
+- Fallback backend currently provides motion-only insights; posture would require a different on-device model.
+
+---
+
+## Development Tips
+
+- Set `LOG_LEVEL=DEBUG` to increase verbosity.
+- Modules are loosely coupled, so you can unit-test audio and video paths separately.
+- Respect the licensing terms of any external models, especially MediaPipe Tasks.

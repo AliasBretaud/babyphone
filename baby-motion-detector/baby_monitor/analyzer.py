@@ -27,7 +27,7 @@ from .pose import PoseAnalyzer
 
 
 class AnalyzerClient:
-    """Client WebRTC qui consomme la vidéo/audio et déclenche les analyses."""
+    """WebRTC client that consumes the media stream and runs analytics."""
 
     def __init__(self, config: AnalyzerConfig) -> None:
         self.config = config
@@ -57,7 +57,7 @@ class AnalyzerClient:
         self._is_awake: bool = False
 
     async def run(self) -> None:
-        """Démarre la boucle de signalisation et reste actif jusqu'à fermeture."""
+        """Start the signaling loop and keep running until shutdown is requested."""
         ssl_context = None
         if self.config.signaling_url.startswith("wss://"):
             ssl_context = ssl.create_default_context()
@@ -65,7 +65,7 @@ class AnalyzerClient:
                 ssl_context.check_hostname = False
                 ssl_context.verify_mode = ssl.CERT_NONE
         logging.info(
-            "Connexion au serveur de signalisation %s (room=%s)",
+            "Connecting to signaling server %s (room=%s)",
             self.config.signaling_url,
             self.config.room,
         )
@@ -85,29 +85,29 @@ class AnalyzerClient:
                     await self._signaling_loop()
             except websockets.exceptions.ConnectionClosed as exc:
                 if self._stop_requested:
-                    logging.info("WebSocket fermé lors de l'arrêt: %s", exc)
+                    logging.info("WebSocket closed while stopping: %s", exc)
                     break
-                logging.warning("WebSocket fermé (%s), tentative de reconnexion...", exc)
+                logging.warning("WebSocket closed (%s), retrying in 2s...", exc)
                 await asyncio.sleep(2)
                 continue
             except Exception:
                 if self._stop_requested:
                     break
-                logging.exception("Erreur inattendue côté client, tentative de reconnexion")
+                logging.exception("Unexpected client error, retrying in 2s")
                 await asyncio.sleep(2)
                 continue
             finally:
                 self._ws = None
             if not self._stop_requested:
-                logging.warning("Boucle principale terminée, reconnexion dans 2s...")
+                logging.warning("Main loop ended, reconnecting in 2s...")
                 await asyncio.sleep(2)
 
-        logging.info("Boucle principale arrêtée")
+        logging.info("Main loop stopped")
 
     async def _setup_peer_connection(self) -> None:
         ice_servers = [RTCIceServer(urls=self.config.stun_servers)]
         self._pc = RTCPeerConnection(configuration=RTCConfiguration(iceServers=ice_servers))
-        # Préparer des transceivers recvonly pour refléter le comportement du viewer web
+        # Prepare recvonly transceivers to mimic the web viewer behavior
         self._pc.addTransceiver("video", direction="recvonly")
         self._pc.addTransceiver("audio", direction="recvonly")
 
@@ -124,7 +124,7 @@ class AnalyzerClient:
                     },
                 }
                 logging.info(
-                    "Candidate locale envoyée (mid=%s, index=%s)",
+                    "Sent local candidate (mid=%s, index=%s)",
                     candidate.sdpMid,
                     candidate.sdpMLineIndex,
                 )
@@ -144,13 +144,13 @@ class AnalyzerClient:
             if self._pc is None:
                 return
             state = self._pc.connectionState
-            logging.info("PeerConnection état: %s", state)
+            logging.info("PeerConnection state: %s", state)
             if state == "failed":
                 await self._attempt_rejoin("peer connection failed")
 
         @self._pc.on("track")
         def on_track(track) -> None:
-            logging.info("Flux %s reçu", track.kind)
+            logging.info("Track %s received", track.kind)
             if track.kind == "video":
                 self._video_task = asyncio.create_task(self._consume_video(track))
             elif track.kind == "audio":
@@ -159,13 +159,13 @@ class AnalyzerClient:
     async def _signaling_loop(self) -> None:
         assert self._ws is not None
 
-        logging.info("Boucle de signalisation démarrée.")
+        logging.info("Signaling loop started.")
         try:
             async for raw in self._ws:
                 try:
                     message = json.loads(raw)
                 except json.JSONDecodeError:
-                    logging.warning("Message JSON invalide: %s", raw)
+                    logging.warning("Invalid JSON message: %s", raw)
                     continue
 
                 msg_type = message.get("type")
@@ -175,20 +175,20 @@ class AnalyzerClient:
                     elif msg_type == "candidate":
                         await self._handle_remote_candidate(message)
                     elif msg_type == "peer-left":
-                        logging.info("Broadcaster déconnecté (%s)", message.get("peerId"))
+                        logging.info("Broadcaster disconnected (%s)", message.get("peerId"))
                         await self._reset()
                     elif msg_type == "viewer-joined":
                         logging.info(
-                            "Notification viewer-joined reçue (id=%s)",
+                            "Viewer-joined notification received (id=%s)",
                             message.get("viewerId"),
                         )
                 except Exception:
-                    logging.exception("Erreur lors du traitement du message WS: %s", message)
+                    logging.exception("Error while handling WS message: %s", message)
         except websockets.exceptions.ConnectionClosed as exc:
-            logging.warning("WebSocket interrompu (%s) – sortie de la boucle", exc)
+            logging.warning("WebSocket interrupted (%s) – leaving loop", exc)
             raise
         finally:
-            logging.info("Boucle de signalisation terminée.")
+            logging.info("Signaling loop finished.")
 
     async def _handle_offer(self, message: dict) -> None:
         if self._pc is None:
@@ -196,17 +196,17 @@ class AnalyzerClient:
         assert self._pc is not None and self._ws is not None
         offer = message.get("offer")
         if not offer:
-            logging.warning("Offer manquant dans le message: %s", message)
+            logging.warning("Offer missing from message: %s", message)
             return
 
-        logging.info("Offer reçu – création de la réponse locale.")
+        logging.info("Offer received – creating local answer.")
         rtc_offer = RTCSessionDescription(sdp=offer["sdp"], type=offer["type"])
         await self._pc.setRemoteDescription(rtc_offer)
-        logging.info("Offer SDP reçu (%d octets)", len(rtc_offer.sdp or ""))
+        logging.info("Offer SDP received (%d bytes)", len(rtc_offer.sdp or ""))
         answer = await self._pc.createAnswer()
         await self._pc.setLocalDescription(answer)
         logging.info(
-            "Answer SDP générée (%d octets)",
+            "Answer SDP generated (%d bytes)",
             len(self._pc.localDescription.sdp or ""),
         )
         payload = {
@@ -218,7 +218,7 @@ class AnalyzerClient:
             "targetId": message.get("fromId"),
         }
         await self._ws.send(json.dumps(payload))
-        logging.info("Réponse envoyée au broadcaster (targetId=%s)", message.get("fromId"))
+        logging.info("Answer sent to broadcaster (targetId=%s)", message.get("fromId"))
 
     async def _handle_remote_candidate(self, message: dict) -> None:
         assert self._pc is not None
@@ -229,7 +229,7 @@ class AnalyzerClient:
         candidate_sdp = candidate_dict.get("candidate", "") or ""
         if not candidate_sdp.strip():
             logging.info(
-                "Candidate distant vide ignoré (mid=%s, index=%s)",
+                "Ignoring empty remote candidate (mid=%s, index=%s)",
                 candidate_dict.get("sdpMid"),
                 candidate_dict.get("sdpMLineIndex"),
             )
@@ -241,12 +241,12 @@ class AnalyzerClient:
             candidate.sdpMLineIndex = candidate_dict.get("sdpMLineIndex")
             await self._pc.addIceCandidate(candidate)
             logging.info(
-                "Candidate distant ajouté (mid=%s, index=%s)",
+                "Added remote candidate (mid=%s, index=%s)",
                 candidate_dict.get("sdpMid"),
                 candidate_dict.get("sdpMLineIndex"),
             )
         except Exception:
-            logging.exception("Échec addIceCandidate avec %s", candidate_dict)
+            logging.exception("Failed to add remote candidate %s", candidate_dict)
 
     async def _consume_video(self, track) -> None:
         frame_count = 0
@@ -254,17 +254,17 @@ class AnalyzerClient:
         while True:
             try:
                 frame = await track.recv()
-            except MediaStreamError as exc:  # pragma: no cover - dépend de aiortc
-                logging.info("Flux vidéo terminé (%s)", exc)
+            except MediaStreamError as exc:  # pragma: no cover - depends on aiortc
+                logging.info("Video track ended (%s)", exc)
                 break
             except Exception:
-                logging.exception("Erreur lors de la réception vidéo")
+                logging.exception("Error while receiving video")
                 break
 
             frame_count += 1
             if not first_frame_logged:
                 logging.info(
-                    "Flux vidéo: première frame reçue (pts=%s, time=%s)",
+                    "Video track: first frame received (pts=%s, time=%s)",
                     frame.pts,
                     frame.time,
                 )
@@ -276,7 +276,7 @@ class AnalyzerClient:
                     None, self._pose_analyzer.process_frame, frame_bgr
                 )
             except Exception:
-                logging.exception("Erreur analyse pose")
+                logging.exception("Pose analysis error")
                 continue
             if not observation:
                 continue
@@ -293,16 +293,16 @@ class AnalyzerClient:
             try:
                 frame = await track.recv()
             except MediaStreamError as exc:  # pragma: no cover
-                logging.info("Flux audio terminé (%s)", exc)
+                logging.info("Audio track ended (%s)", exc)
                 break
             except Exception:
-                logging.exception("Erreur lors de la réception audio")
+                logging.exception("Error while receiving audio")
                 break
 
             frame_count += 1
             if not first_frame_logged:
                 logging.info(
-                    "Flux audio: premier paquet reçu (pts=%s, samples=%s)",
+                    "Audio track: first packet received (pts=%s, samples=%s)",
                     frame.pts,
                     frame.samples,
                 )
@@ -311,11 +311,11 @@ class AnalyzerClient:
             try:
                 event = self._audio_analyzer.process_frame(frame)
             except Exception:
-                logging.exception("Erreur analyse audio")
+                logging.exception("Audio analysis error")
                 continue
             if event:
                 logging.info(
-                    "Détection pleurs bébé – énergie %.3f, ratio %.2f",
+                    "Cry detected – energy %.3f, ratio %.2f",
                     event.energy,
                     event.ratio_mid_band,
                 )
@@ -329,7 +329,7 @@ class AnalyzerClient:
         avg_knee = extras.get("avg_knee_angle")
         leg_ext = extras.get("leg_extension")
         torso_text = (
-            f"torse={torso_angle:.1f}°" if torso_angle is not None else "torse=n/a"
+            f"torso={torso_angle:.1f}°" if torso_angle is not None else "torso=n/a"
         )
         knee_text = f"{avg_knee:.1f}°" if avg_knee is not None else "n/a"
         leg_text = f"{leg_ext:.2f}" if leg_ext is not None else "n/a"
@@ -340,7 +340,7 @@ class AnalyzerClient:
         ) >= self._movement_cooldown:
             trace_id = uuid.uuid4().hex[:8]
             logging.info(
-                "Trace %s – Movement detected (score=%.3f, posture=%s, %s, genou=%s, jambe=%s)",
+                "Trace %s – Movement detected (score=%.3f, posture=%s, %s, knee=%s, leg=%s)",
                 trace_id,
                 observation.movement_score,
                 posture,
@@ -374,7 +374,7 @@ class AnalyzerClient:
                     trace_id = uuid.uuid4().hex[:8]
                     duration = now - self._wake_candidate_since
                     logging.info(
-                        "Trace %s – Wake detected (posture=%s, durée=%.1fs, %s, genou=%s, jambe=%s)",
+                        "Trace %s – Wake detected (posture=%s, duration=%.1fs, %s, knee=%s, leg=%s)",
                         trace_id,
                         posture,
                         duration,
@@ -420,20 +420,20 @@ class AnalyzerClient:
             self._pc = None
         self._current_posture = None
         self._audio_analyzer.close()
-        logging.info("État du client réinitialisé.")
+        logging.info("Client state reset.")
 
     async def _attempt_rejoin(self, reason: str) -> None:
         if self._ws is None or self._ws.closed:
             logging.info(
-                "WebSocket fermé, la boucle principale gérera la reconnexion (%s)",
+                "WebSocket closed, main loop will handle reconnection (%s)",
                 reason,
             )
             return
         if self._rejoin_lock.locked():
-            logging.info("Reconnexion déjà en cours, ignore (%s)", reason)
+            logging.info("Reconnection already in progress, ignoring (%s)", reason)
             return
         async with self._rejoin_lock:
-            logging.warning("Perte de connexion (%s) – tentative de reconnexion", reason)
+            logging.warning("Connection lost (%s) – attempting to rejoin", reason)
             await self._reset()
             try:
                 await self._ws.send(
@@ -443,7 +443,7 @@ class AnalyzerClient:
                 )
                 await self._setup_peer_connection()
             except websockets.exceptions.ConnectionClosed:
-                logging.warning("Impossible de réémettre join: WS fermé")
+                logging.warning("Cannot re-send join: WS already closed")
 
     async def close(self) -> None:
         self._stop_requested = True
@@ -470,14 +470,14 @@ class AnalyzerClient:
             cv2.imwrite(str(filename), annotated)
             desc = event.get("description") or event.get("label")
             logging.info(
-                "Trace %s – Capture annotée (%s) enregistrée: %s",
+                "Trace %s – Annotated snapshot (%s) saved: %s",
                 trace_id,
                 desc,
                 filename,
             )
         except Exception:
             logging.exception(
-                "Trace %s – Impossible d'enregistrer la capture annotée", trace_id
+                "Trace %s – Failed to save annotated snapshot", trace_id
             )
 
     def _register_event(self, event: dict, timestamp: float) -> bool:

@@ -6,7 +6,16 @@ import os
 import signal
 import sys
 import threading
+import warnings
 from typing import Sequence
+
+if sys.version_info >= (3, 12):
+    warnings.warn(
+        "MediaPipe is not officially distributed for Python 3.12+. "
+        "The analyzer will fall back to motion-only mode (no posture).",
+        RuntimeWarning,
+        stacklevel=2,
+    )
 
 from baby_monitor import AnalyzerClient, AnalyzerConfig
 
@@ -38,12 +47,6 @@ def _install_stderr_filter(blocked_phrases: Sequence[str]) -> None:
 
 
 async def _run() -> None:
-    if sys.version_info >= (3, 12):
-        raise RuntimeError(
-            "MediaPipe n'est pas encore distribué pour Python 3.12+. "
-            "Veuillez utiliser Python 3.10 ou 3.11 pour exécuter l'analyseur."
-        )
-
     config = AnalyzerConfig.from_args()
     logging.basicConfig(
         level=getattr(logging, config.log_level, logging.INFO),
@@ -81,7 +84,7 @@ async def _run() -> None:
     stop_event = asyncio.Event()
 
     def _stop(*_):
-        logging.info("Interruption reçue, arrêt en cours...")
+        logging.info("Interrupt received, shutting down...")
         stop_event.set()
 
     for sig in (signal.SIGINT, signal.SIGTERM):

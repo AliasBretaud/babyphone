@@ -19,8 +19,8 @@
       );
       const reason =
         isHttps || isLocalhost
-          ? "Votre navigateur ne semble pas supporter getUserMedia."
-          : "Sur Android, ouvrez cette page en HTTPS pour accéder à la caméra/micro.";
+          ? "Your browser does not seem to support getUserMedia."
+          : "On Android, open this page over HTTPS to access the camera/mic.";
       throw new Error(reason);
     }
   }
@@ -203,7 +203,7 @@
           await remote.play();
           overlay.classList.add("hidden");
         } catch (e) {
-          alert("Appuyez sur Play pour autoriser l’audio.");
+          alert("Tap Play to authorize audio playback.");
         }
       };
       qs("fsBtn").onclick = async () => {

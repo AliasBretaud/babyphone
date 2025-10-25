@@ -66,74 +66,74 @@ class AnalyzerConfig:
         parser.add_argument(
             "--signaling",
             default=env_cfg.signaling_url,
-            help="URL WebSocket de signalisation (wss://...)",
+            help="Signaling WebSocket URL (wss://...)",
         )
         parser.add_argument(
             "--room",
             default=env_cfg.room,
-            help="Nom de la salle à rejoindre (défaut: baby)",
+            help="Room to join (default: baby)",
         )
         parser.add_argument(
             "--stun",
             nargs="*",
             default=env_cfg.stun_servers,
-            help="Liste des serveurs STUN (séparés par des espaces)",
+            help="Space-separated list of STUN servers",
         )
         group = parser.add_mutually_exclusive_group()
         group.add_argument(
             "--ssl-verify",
             dest="disable_ssl_verify",
             action="store_false",
-            help="Activer la vérification TLS stricte",
+            help="Enable strict TLS verification",
         )
         group.add_argument(
             "--no-ssl-verify",
             dest="disable_ssl_verify",
             action="store_true",
-            help="Désactiver la vérification TLS (certificats auto-signés)",
+            help="Disable TLS verification (for self-signed certs)",
         )
         parser.set_defaults(disable_ssl_verify=env_cfg.disable_ssl_verify)
         parser.add_argument(
             "--audio-dir",
             default=env_cfg.audio_output_dir,
-            help="Dossier d'enregistrement audio",
+            help="Directory for recorded audio",
         )
         audio_group = parser.add_mutually_exclusive_group()
         audio_group.add_argument(
             "--record-audio",
             dest="record_audio",
             action="store_true",
-            help="Enregistrer le flux audio sur disque (WAV)",
+            help="Persist the audio stream to disk (WAV)",
         )
         audio_group.add_argument(
             "--no-record-audio",
             dest="record_audio",
             action="store_false",
-            help="Ne pas enregistrer l'audio sur disque (par défaut)",
+            help="Do not record audio to disk (default)",
         )
         parser.set_defaults(record_audio=env_cfg.record_audio)
         parser.add_argument(
             "--log-level",
             default=env_cfg.log_level,
-            help="Niveau de log (DEBUG, INFO, WARNING...)",
+            help="Logging level (DEBUG, INFO, WARNING, ...)",
         )
         parser.add_argument(
             "--snapshot-dir",
             default=env_cfg.snapshot_dir,
-            help="Dossier où stocker les captures annotées",
+            help="Directory where annotated snapshots are stored",
         )
         snapshot_group = parser.add_mutually_exclusive_group()
         snapshot_group.add_argument(
             "--snapshots",
             dest="snapshot_on_event",
             action="store_true",
-            help="Activer la capture d'images annotées à chaque événement détecté",
+            help="Enable annotated snapshots for each event",
         )
         snapshot_group.add_argument(
             "--no-snapshots",
             dest="snapshot_on_event",
             action="store_false",
-            help="Désactiver les captures d'images annotées",
+            help="Disable annotated snapshots",
         )
         parser.set_defaults(snapshot_on_event=env_cfg.snapshot_on_event)
         args = parser.parse_args(argv)
