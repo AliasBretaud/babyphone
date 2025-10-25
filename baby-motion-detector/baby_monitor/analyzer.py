@@ -55,6 +55,9 @@ class AnalyzerClient:
         self._wake_candidate_since: float = 0.0
         self._wake_min_duration = 3.0
         self._is_awake: bool = False
+        self._current_broadcaster_id: Optional[str] = None
+        self._reconnect_max_attempts = 5
+        self._reconnect_interval = 1.0
 
     async def run(self) -> None:
         """Start the signaling loop and keep running until shutdown is requested."""
@@ -175,8 +178,7 @@ class AnalyzerClient:
                     elif msg_type == "candidate":
                         await self._handle_remote_candidate(message)
                     elif msg_type == "peer-left":
-                        logging.info("Broadcaster disconnected (%s)", message.get("peerId"))
-                        await self._reset()
+                        await self._handle_peer_departure(message)
                     elif msg_type == "viewer-joined":
                         logging.info(
                             "Viewer-joined notification received (id=%s)",
@@ -194,6 +196,7 @@ class AnalyzerClient:
         if self._pc is None:
             await self._setup_peer_connection()
         assert self._pc is not None and self._ws is not None
+        self._current_broadcaster_id = message.get("fromId")
         offer = message.get("offer")
         if not offer:
             logging.warning("Offer missing from message: %s", message)
@@ -247,6 +250,26 @@ class AnalyzerClient:
             )
         except Exception:
             logging.exception("Failed to add remote candidate %s", candidate_dict)
+
+    async def _handle_peer_departure(self, message: dict) -> None:
+        peer_id = message.get("peerId")
+        if not peer_id:
+            return
+        if self._current_broadcaster_id is None:
+            logging.info("Peer left (%s) but no active broadcaster tracked.", peer_id)
+            return
+        if peer_id != self._current_broadcaster_id:
+            logging.debug(
+                "Peer %s left but it does not match the active broadcaster (%s)",
+                peer_id,
+                self._current_broadcaster_id,
+            )
+            return
+        logging.info(
+            "Broadcaster disconnected (%s) – attempting to restore the stream",
+            peer_id,
+        )
+        await self._attempt_rejoin("broadcaster left")
 
     async def _consume_video(self, track) -> None:
         frame_count = 0
@@ -420,6 +443,7 @@ class AnalyzerClient:
             self._pc = None
         self._current_posture = None
         self._audio_analyzer.close()
+        self._current_broadcaster_id = None
         logging.info("Client state reset.")
 
     async def _attempt_rejoin(self, reason: str) -> None:
@@ -434,16 +458,36 @@ class AnalyzerClient:
             return
         async with self._rejoin_lock:
             logging.warning("Connection lost (%s) – attempting to rejoin", reason)
-            await self._reset()
-            try:
-                await self._ws.send(
-                    json.dumps(
-                        {"type": "join", "room": self.config.room, "role": "viewer"}
+            payload = json.dumps(
+                {"type": "join", "room": self.config.room, "role": "viewer"}
+            )
+            for attempt in range(1, self._reconnect_max_attempts + 1):
+                await self._reset()
+                try:
+                    await self._ws.send(payload)
+                    await self._setup_peer_connection()
+                    logging.info(
+                        "Rejoin successful on attempt %d/%d",
+                        attempt,
+                        self._reconnect_max_attempts,
                     )
-                )
-                await self._setup_peer_connection()
-            except websockets.exceptions.ConnectionClosed:
-                logging.warning("Cannot re-send join: WS already closed")
+                    return
+                except websockets.exceptions.ConnectionClosed:
+                    logging.warning("Cannot re-send join: WS already closed")
+                    return
+                except Exception:
+                    logging.exception(
+                        "Rejoin attempt %d/%d failed",
+                        attempt,
+                        self._reconnect_max_attempts,
+                    )
+                if attempt < self._reconnect_max_attempts:
+                    await asyncio.sleep(self._reconnect_interval)
+            logging.error(
+                "Impossible de rétablir la connexion après %d tentatives (%s)",
+                self._reconnect_max_attempts,
+                reason,
+            )
 
     async def close(self) -> None:
         self._stop_requested = True
