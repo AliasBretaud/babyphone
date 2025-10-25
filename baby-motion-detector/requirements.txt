@@ -1,0 +1,9 @@
+# NOTE:
+# mediapipe currently publishes wheels only for Python 3.10/3.11.
+# Keep the interpreter <= 3.11 when creating the virtualenv.
+aiortc==1.14.0
+websockets==15.0.1
+mediapipe==0.10.21 ; python_version < "3.12"
+opencv-python==4.9.0.80
+numpy==1.26.4
+scipy==1.16.2

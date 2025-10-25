@@ -359,27 +359,6 @@ class PoseAnalyzer:
             return None
         return float(np.mean(values))
 
-    def _pad_to_square(self, frame: np.ndarray) -> Tuple[np.ndarray, Tuple[int, int, int, int]]:
-        height, width = frame.shape[:2]
-        if height == width:
-            return frame, (0, 0, 0, 0)
-        size = max(height, width)
-        pad_top = (size - height) // 2
-        pad_bottom = size - height - pad_top
-        pad_left = (size - width) // 2
-        pad_right = size - width - pad_left
-        padded = cv2.copyMakeBorder(
-            frame,
-            pad_top,
-            pad_bottom,
-            pad_left,
-            pad_right,
-            borderType=cv2.BORDER_CONSTANT,
-            value=[0, 0, 0],
-        )
-        # Unused with tasks pipeline; kept for compatibility if needed.
-        return frame, (0, 0, 0, 0)
-
     def _ensure_model(self) -> Path:
         override = os.getenv("POSE_MODEL_PATH")
         if override:

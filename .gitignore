@@ -142,6 +142,7 @@ vite.config.ts.timestamp-*
 
 # Server keys
 certs/
+node-server/certs/
 *.key
 *.crt
 *.pem
@@ -157,10 +158,11 @@ env/
 *.pyo
 *.pyd
 pip-wheel-metadata/
-python_analyzer/output/
-python_analyzer/models/
-python_analyzer/.venv/
-python_analyzer/venv/
-python_analyzer/env/
-python_analyzer/__pycache__/
-python_analyzer/**/*.pyc
+baby-motion-detector/output/
+baby-motion-detector/models/
+baby-motion-detector/.venv/
+baby-motion-detector/venv/
+baby-motion-detector/env/
+baby-motion-detector/__pycache__/
+baby-motion-detector/**/*.pyc
+

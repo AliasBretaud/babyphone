@@ -22,10 +22,10 @@ Cette application Python se connecte au serveur BabyPhone via WebRTC pour analys
 
 ## Installation
 
-1. Créez un virtualenv Python 3.9+ :
+1. Créez un virtualenv avec Python 3.10 ou 3.11 (mediapipe ne fournit pas encore de roue pour Python 3.12+) :
 
    ```bash
-   cd python_analyzer
+   cd baby-motion-detector
    python -m venv .venv
    source .venv/bin/activate
    ```
@@ -36,7 +36,7 @@ Cette application Python se connecte au serveur BabyPhone via WebRTC pour analys
    pip install -r requirements.txt
    ```
 
-   > `mediapipe`, `aiortc` et `opencv-python` téléchargent des modèles/prérequis lors de l'installation. Assurez-vous d'avoir une connexion réseau pour la première installation.
+   > `mediapipe`, `aiortc` et `opencv-python` téléchargent des modèles/prérequis lors de l'installation. Assurez-vous d'avoir une connexion réseau pour la première installation. Si vous voyez une erreur `No matching distribution found for mediapipe`, vérifiez que votre interpréteur est en Python 3.10/3.11.
 
 ---
 
@@ -56,21 +56,21 @@ Arguments principaux :
 - `--signaling` : URL WebSocket du serveur Node (par défaut `wss://localhost:3443/ws`).
 - `--room` : nom de la salle (`baby` par défaut ou `?room=...` côté Web).
 - `--ssl-verify/--no-ssl-verify` : active/désactive la vérification TLS (utile avec certificats auto-signés du projet).
-- `--audio-dir` : dossier de sortie pour l'enregistrement audio (`python_analyzer/output` par défaut).
+- `--audio-dir` : dossier de sortie pour l'enregistrement audio (`baby-motion-detector/output/audio` par défaut, créé automatiquement si nécessaire).
 - `--record-audio / --no-record-audio` : activer ou non la sauvegarde du flux audio en WAV (désactivé par défaut).
 - `--snapshots / --no-snapshots` : activer les captures annotées à chaque événement détecté (mouvement ou réveil).
-- `--snapshot-dir` : dossier de sortie des captures annotées (défaut `python_analyzer/output/snapshots`).
+- `--snapshot-dir` : dossier de sortie des captures annotées (défaut `baby-motion-detector/output/snapshots`).
 
-Le script se connecte, attend un broadcaster et consomme le flux média. Les événements (pleurs, mouvement, réveil) sont affichés dans la console. Si `--record-audio` est activé, un fichier `python_analyzer/output/audio/baby_audio_<horodatage>.wav` est écrit. Avec `--snapshots`, chaque événement génère une image annotée enregistrée dans `snapshot-dir` avec un identifiant de trace commun au log.
+Le script se connecte, attend un broadcaster et consomme le flux média. Les événements (pleurs, mouvement, réveil) sont affichés dans la console. Si `--record-audio` est activé, un fichier `baby-motion-detector/output/audio/baby_audio_<horodatage>.wav` est écrit. Avec `--snapshots`, chaque événement génère une image annotée enregistrée dans `snapshot-dir` avec un identifiant de trace commun au log.
 
-> ℹ️ Au premier lancement, le modèle MediaPipe Tasks (`pose_landmarker_full.task`) est téléchargé automatiquement dans `python_analyzer/models/`. Vous pouvez fournir votre propre modèle via la variable d'environnement `POSE_MODEL_PATH`.
+> ℹ️ Au premier lancement, le modèle MediaPipe Tasks (`pose_landmarker_full.task`) est téléchargé automatiquement dans `baby-motion-detector/models/`. Vous pouvez fournir votre propre modèle via la variable d'environnement `POSE_MODEL_PATH`.
 
 ---
 
 ## Architecture
 
 ```
-python_analyzer/
+baby-motion-detector/
 ├── run_analyzer.py          # Point d'entrée CLI
 ├── requirements.txt
 └── baby_monitor/
@@ -104,10 +104,10 @@ Chaque argument CLI possède un équivalent via variables :
 | `ANALYZER_SIGNALING`   | URL WebSocket de signalisation              | `wss://localhost:3443/ws`          |
 | `ANALYZER_ROOM`        | Salle à rejoindre                           | `baby`                             |
 | `ANALYZER_SSL_VERIFY`  | `true` / `false` pour activer TLS strict    | `false`                            |
-| `ANALYZER_AUDIO_DIR`        | Dossier d'enregistrement audio            | `python_analyzer/output/audio`     |
+| `ANALYZER_AUDIO_DIR`        | Dossier d'enregistrement audio            | `baby-motion-detector/output/audio` |
 | `ANALYZER_AUDIO_RECORD`     | `true` / `false` pour écrire un WAV       | `false`                            |
 | `ANALYZER_SNAPSHOT_ON_EVENT`| `true` / `false` pour activer les captures| `false`                            |
-| `ANALYZER_SNAPSHOT_DIR`     | Dossier pour les captures annotées        | `python_analyzer/output/snapshots` |
+| `ANALYZER_SNAPSHOT_DIR`     | Dossier pour les captures annotées        | `baby-motion-detector/output/snapshots` |
 | `POSE_MODEL_PATH`           | Chemin vers un modèle `.task` personnalisé (facultatif) | _auto-download_ |
 
 ---

@@ -8,6 +8,18 @@ A local-network baby monitor: the **broadcaster** (phone/PC in the baby’s room
 
 ---
 
+## 📦 Repository Layout
+
+```
+.
+├── baby-motion-detector/   # Python analyzer client (see README inside)
+└── node-server/            # Node.js HTTPS signaling server + web UI
+```
+
+The Python analyzer connects as a viewer to classify movements and detect cries, while the Node.js server hosts the WebRTC signaling and UI.
+
+---
+
 ## ✨ Features
 
 - One‑directional A/V (no return audio/video from viewers)
@@ -56,7 +68,7 @@ audio: {
          |                                         |
          |            WebSocket (signaling)        |
          +------------>  Express + ws  <-----------+
-                         (server_https.js, /ws)
+                        (node-server/server_https.js, /ws)
 ```
 
 **Signaling (short):** viewer joins via WS → server notifies broadcasters → broadcaster sends **offer** → viewer replies **answer** → ICE exchange → P2P established. Media **does not** pass through the server.
@@ -67,18 +79,18 @@ audio: {
 
 ```
 .
-├── Dockerfile
-├── docker-compose.yml
-├── package.json
-├── server_https.js          # Express + HTTP→HTTPS redirect + WS signaling
-├── public/
-│   ├── index.html           # Home (choose Broadcaster / Viewer)
-│   ├── broadcaster.html     # Broadcaster (camera + mic)
-│   ├── viewer.html          # Viewer (fullscreen + Play button)
-│   ├── client.js            # WebRTC client (room via ?room=..., default 'baby')
-│   └── styles.css
-└── bin/
-    └── generate-certs.sh    # Self-signed cert generation (OpenSSL)
+├── baby-motion-detector/
+│   ├── README.md
+│   ├── run_analyzer.py
+│   └── baby_monitor/…       # Pose & audio analyzers (Python)
+└── node-server/
+    ├── Dockerfile
+    ├── docker-compose.yml
+    ├── package.json
+    ├── server.js            # HTTP entrypoint (WS + static assets)
+    ├── server_https.js      # HTTPS redirector + WS signaling
+    ├── public/              # index.html, broadcaster.html, viewer.html, client.js…
+    └── bin/generate-certs.sh
 ```
 
 ---
@@ -107,18 +119,21 @@ You must have a key/cert **before** launching Node. Use **Method A** below to cr
 Requires `openssl` available on your machine.
 
 ```bash
-# From the project root
+# From the repo root
+cd node-server
 CERT_DIR=./certs CERT_HOSTNAMES="localhost 127.0.0.1" bash bin/generate-certs.sh
 ```
 
 - Add any LAN IP / hostname you want covered by the certificate:
   ```bash
-  CERT_DIR=./certs   CERT_HOSTNAMES="localhost 127.0.0.1 192.168.1.23 baby.local"   bash bin/generate-certs.sh
+  cd node-server
+  CERT_DIR=./certs CERT_HOSTNAMES="localhost 127.0.0.1 192.168.1.23 baby.local" bash bin/generate-certs.sh
   ```
 
 Then start the app:
 
 ```bash
+# Still inside node-server/
 npm install
 node server_https.js
 # http://localhost:3000 -> redirects to https://localhost:3443
@@ -132,6 +147,7 @@ node server_https.js
 The browser will show a **warning** once (expected for self‑signed certs).
 
 ```bash
+cd node-server
 docker compose up -d
 # HTTP  : http://<host>:3000  (redirects to HTTPS)
 # HTTPS : https://<host>:3443/
@@ -144,6 +160,7 @@ docker compose up -d
 Provide a space‑separated list via `CERT_HOSTNAMES` at runtime; the init service will generate a cert covering all SANs if none exist yet:
 
 ```bash
+cd node-server
 CERT_HOSTNAMES="localhost 127.0.0.1 192.168.1.23 baby.local" docker compose up -d --build
 ```
 
@@ -157,3 +174,11 @@ CERT_HOSTNAMES="localhost 127.0.0.1 192.168.1.23 baby.local" docker compose up -
 
 - The private key lives only in the **volume** (not in the Git repo, not baked into the image).
 - In advanced setups, you can mount the volume **read‑only** for the app once generated.
+
+---
+
+## 🧠 Python Analyzer (Optional)
+
+The `baby-motion-detector/` directory hosts an async Python client that connects as a viewer, analyses pose and audio, and can trigger alerts or snapshots.  
+Use Python 3.10 or 3.11 when creating the virtualenv (MediaPipe does not yet publish wheels for 3.12+).  
+Refer to `baby-motion-detector/README.md` for installation and usage instructions.

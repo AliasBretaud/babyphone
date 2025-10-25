@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Iterable, List
 
 
@@ -10,6 +11,10 @@ def _parse_bool(value: str | None, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+_ANALYZER_ROOT = Path(__file__).resolve().parent.parent
+_DEFAULT_AUDIO_DIR = _ANALYZER_ROOT / "output" / "audio"
+_DEFAULT_SNAPSHOT_DIR = _ANALYZER_ROOT / "output" / "snapshots"
 
 
 @dataclass
@@ -22,11 +27,11 @@ class AnalyzerConfig:
         default_factory=lambda: ["stun:stun.l.google.com:19302"]
     )
     disable_ssl_verify: bool = True
-    audio_output_dir: str = "python_analyzer/output/audio"
+    audio_output_dir: str = str(_DEFAULT_AUDIO_DIR)
     record_audio: bool = False
     log_level: str = "INFO"
     snapshot_on_event: bool = False
-    snapshot_dir: str = "output/snapshots"
+    snapshot_dir: str = str(_DEFAULT_SNAPSHOT_DIR)
 
     @classmethod
     def from_env(cls) -> "AnalyzerConfig":

@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import signal
+import sys
 import threading
 from typing import Sequence
 
@@ -37,6 +38,12 @@ def _install_stderr_filter(blocked_phrases: Sequence[str]) -> None:
 
 
 async def _run() -> None:
+    if sys.version_info >= (3, 12):
+        raise RuntimeError(
+            "MediaPipe n'est pas encore distribué pour Python 3.12+. "
+            "Veuillez utiliser Python 3.10 ou 3.11 pour exécuter l'analyseur."
+        )
+
     config = AnalyzerConfig.from_args()
     logging.basicConfig(
         level=getattr(logging, config.log_level, logging.INFO),
