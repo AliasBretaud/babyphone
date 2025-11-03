@@ -88,6 +88,7 @@ Notable options:
 - `--video-max-bitrate 4000000` (ou plus) pour augmenter la netteté, `--video-min-bitrate` pour garantir un plancher, `--video-preferred-codec H264` pour prioriser un codec spécifique (si disponible dans FFmpeg/PyAV), `--video-input-format mjpeg` pour forcer un flux MJPEG matériel via v4l2.
 - `--audio-device hw:1,0` for USB mics exposed by ALSA.
 - `--audio-format alsa` (Linux) or `--audio-format avfoundation` (macOS) to force a specific FFmpeg backend.
+- `--audio-gain-db 12` pour relever le niveau sonore, `--audio-noise-gate-db -55` + `--audio-highpass 120` pour atténuer les grésillements et le bas du spectre.
 - `--no-video` / `--no-audio` to disable a track entirely.
 - `BROADCASTER_*` environment variables mirror every CLI flag (documentation below).
 - Sur Raspberry Pi, vérifie les périphériques avec `arecord -L` et passe un nom explicite (`plughw:CARD=Device,DEV=0`, `sysdefault:CARD=Device`, etc.). Le script positionne automatiquement `ALSA_CONFIG_PATH` vers `/usr/share/alsa/alsa.conf` si nécessaire pour éviter l’erreur `Cannot access file /tmp/vendor/share/alsa/alsa.conf`.
@@ -167,6 +168,9 @@ Every analyzer flag has an environment counterpart:
 | `BROADCASTER_AUDIO_FORMAT`       | FFmpeg format for the mic                         | Linux: `alsa`, otherwise unset        |
 | `BROADCASTER_AUDIO_SAMPLE_RATE`  | Audio sample rate in Hz                           | `48000`                       |
 | `BROADCASTER_AUDIO_CHANNELS`     | Number of audio channels                          | `1`                           |
+| `BROADCASTER_AUDIO_GAIN_DB`      | Additional gain applied to audio (dB)             | `0`                           |
+| `BROADCASTER_AUDIO_NOISE_GATE_DB`| Noise gate threshold (dBFS, negative)             | unset                         |
+| `BROADCASTER_AUDIO_HIGHPASS_HZ`  | High-pass cutoff frequency (Hz)                   | unset                         |
 | `BROADCASTER_AUDIO_ENABLED`      | `true`/`false` to toggle audio capture            | `true`                        |
 
 ---

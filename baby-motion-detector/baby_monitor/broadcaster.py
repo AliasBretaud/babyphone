@@ -11,10 +11,12 @@ from typing import Dict, Iterable, List, Optional
 
 import sys
 
+import numpy as np
 import websockets
 from websockets import WebSocketClientProtocol
 
 from aiortc import (
+    AudioStreamTrack,
     RTCConfiguration,
     RTCPeerConnection,
     RTCSessionDescription,
@@ -23,6 +25,9 @@ from aiortc import (
 from aiortc.contrib.media import MediaPlayer, MediaRelay
 from aiortc.rtcconfiguration import RTCIceServer
 from aiortc.sdp import candidate_from_sdp
+from av.audio.frame import AudioFrame
+
+from scipy import signal
 
 try:
     from websockets.protocol import State as WSState
@@ -134,6 +139,9 @@ class BroadcasterConfig:
     audio_format: Optional[str] = DEFAULT_AUDIO_FORMAT
     audio_sample_rate: int = 48000
     audio_channels: int = 1
+    audio_gain_db: float = 0.0
+    audio_noise_gate_db: Optional[float] = None
+    audio_highpass_hz: Optional[float] = None
 
     @classmethod
     def from_env(cls) -> "BroadcasterConfig":
@@ -190,6 +198,29 @@ class BroadcasterConfig:
             os.getenv("BROADCASTER_AUDIO_CHANNELS", cfg.audio_channels)
             or cfg.audio_channels
         )
+        gain_env = os.getenv("BROADCASTER_AUDIO_GAIN_DB")
+        if gain_env is not None and gain_env.strip():
+            try:
+                cfg.audio_gain_db = float(gain_env)
+            except ValueError:
+                pass
+        gate_env = os.getenv("BROADCASTER_AUDIO_NOISE_GATE_DB")
+        if gate_env is not None and gate_env.strip():
+            if gate_env.strip().lower() in {"none", "off"}:
+                cfg.audio_noise_gate_db = None
+            else:
+                try:
+                    cfg.audio_noise_gate_db = float(gate_env)
+                except ValueError:
+                    pass
+        hp_env = os.getenv("BROADCASTER_AUDIO_HIGHPASS_HZ")
+        if hp_env is not None and hp_env.strip():
+            try:
+                hp_val = float(hp_env)
+            except ValueError:
+                hp_val = cfg.audio_highpass_hz
+            else:
+                cfg.audio_highpass_hz = hp_val if hp_val > 0 else None
         cfg.audio_enabled = _parse_bool(
             os.getenv("BROADCASTER_AUDIO_ENABLED"),
             default=cfg.audio_enabled and bool(cfg.audio_device),
@@ -320,6 +351,32 @@ class BroadcasterConfig:
             default=env_cfg.audio_channels,
             help="Number of audio channels (default: 1).",
         )
+        parser.add_argument(
+            "--audio-gain-db",
+            type=float,
+            default=env_cfg.audio_gain_db,
+            help="Apply additional gain to the audio stream in dB (default: 0).",
+        )
+        parser.add_argument(
+            "--audio-noise-gate-db",
+            dest="audio_noise_gate_db",
+            type=float,
+            default=env_cfg.audio_noise_gate_db,
+            help="Noise gate threshold in dBFS (negative). Use --no-audio-noise-gate to disable.",
+        )
+        parser.add_argument(
+            "--no-audio-noise-gate",
+            dest="audio_noise_gate_db",
+            action="store_const",
+            const=None,
+            help="Disable the audio noise gate entirely.",
+        )
+        parser.add_argument(
+            "--audio-highpass",
+            type=float,
+            default=env_cfg.audio_highpass_hz or 0.0,
+            help="High-pass filter cutoff in Hz (0 disables the filter).",
+        )
         audio_toggle = parser.add_mutually_exclusive_group()
         audio_toggle.add_argument(
             "--no-audio",
@@ -346,6 +403,7 @@ class BroadcasterConfig:
         if not audio_device or audio_device.lower() == "none":
             args.audio_enabled = False
             audio_device = None
+        audio_highpass = args.audio_highpass if args.audio_highpass and args.audio_highpass > 0 else None
 
         return cls(
             signaling_url=args.signaling,
@@ -367,6 +425,9 @@ class BroadcasterConfig:
             audio_format=args.audio_format.strip() or None,
             audio_sample_rate=args.audio_sample_rate,
             audio_channels=args.audio_channels,
+            audio_gain_db=args.audio_gain_db,
+            audio_noise_gate_db=args.audio_noise_gate_db,
+            audio_highpass_hz=audio_highpass,
         )
 
 
@@ -466,7 +527,19 @@ class HeadlessBroadcaster:
             video_sender = pc.addTrack(self._relay.subscribe(self._video_player.video))
             self._configure_video_sender(video_sender, pc)
         if self.config.audio_enabled and self._audio_player and self._audio_player.audio:
-            pc.addTrack(self._relay.subscribe(self._audio_player.audio))
+            audio_track = self._relay.subscribe(self._audio_player.audio)
+            if (
+                self.config.audio_gain_db
+                or self.config.audio_noise_gate_db is not None
+                or (self.config.audio_highpass_hz and self.config.audio_highpass_hz > 0)
+            ):
+                audio_track = AudioEffectsTrack(
+                    audio_track,
+                    gain_db=self.config.audio_gain_db,
+                    noise_gate_db=self.config.audio_noise_gate_db,
+                    highpass_hz=self.config.audio_highpass_hz,
+                )
+            pc.addTrack(audio_track)
 
         @pc.on("icecandidate")
         async def on_icecandidate(event) -> None:
@@ -679,3 +752,86 @@ class HeadlessBroadcaster:
                     self.config.video_preferred_codec,
                     exc_info=True,
                 )
+
+
+class AudioEffectsTrack(AudioStreamTrack):
+    """Applies gain and simple noise mitigation to an audio source."""
+
+    def __init__(
+        self,
+        source: AudioStreamTrack,
+        *,
+        gain_db: float = 0.0,
+        noise_gate_db: Optional[float] = None,
+        highpass_hz: Optional[float] = None,
+    ) -> None:
+        super().__init__()
+        self._source = source
+        self._gain = 10 ** (gain_db / 20.0) if gain_db else 1.0
+        self._noise_gate = (
+            10 ** (noise_gate_db / 20.0) if noise_gate_db is not None else None
+        )
+        self._highpass_hz = highpass_hz if highpass_hz and highpass_hz > 0 else None
+        self._hp_b: Optional[np.ndarray] = None
+        self._hp_a: Optional[np.ndarray] = None
+        self._hp_state: Optional[List[np.ndarray]] = None
+
+    def _ensure_highpass(self, sample_rate: int, channels: int) -> None:
+        if self._highpass_hz is None:
+            return
+        nyquist = sample_rate / 2.0
+        cutoff = min(self._highpass_hz, nyquist * 0.95)
+        if self._hp_b is None or self._hp_state is None or len(self._hp_state) != channels:
+            self._hp_b, self._hp_a = signal.butter(2, cutoff / nyquist, btype="highpass")
+            self._hp_state = [
+                signal.lfilter_zi(self._hp_b, self._hp_a).astype(np.float32)
+                for _ in range(channels)
+            ]
+
+    async def recv(self) -> AudioFrame:
+        frame = await self._source.recv()
+        samples = frame.to_ndarray()
+        reshape = False
+        if samples.ndim == 1:
+            samples = samples.reshape(1, -1)
+            reshape = True
+
+        floats = samples.astype(np.float32) / 32768.0
+        channels = floats.shape[0]
+
+        if self._highpass_hz:
+            self._ensure_highpass(frame.sample_rate, channels)
+            if self._hp_b is not None and self._hp_state is not None:
+                for idx in range(channels):
+                    floats[idx], self._hp_state[idx] = signal.lfilter(
+                        self._hp_b,
+                        self._hp_a,
+                        floats[idx],
+                        zi=self._hp_state[idx],
+                    )
+
+        if self._noise_gate is not None:
+            rms = np.sqrt(np.mean(floats**2, axis=-1, keepdims=True))
+            floats = np.where(rms < self._noise_gate, 0.0, floats)
+
+        if self._gain != 1.0:
+            floats *= self._gain
+
+        floats = np.clip(floats, -1.0, 1.0).astype(np.float32)
+        int_samples = (floats * 32767.0).astype(np.int16)
+        if reshape:
+            int_samples = int_samples.reshape(-1)
+
+        out_frame = AudioFrame.from_ndarray(int_samples, layout=frame.layout.name)
+        out_frame.sample_rate = frame.sample_rate
+        out_frame.time_base = frame.time_base
+        out_frame.pts = frame.pts
+        return out_frame
+
+    async def stop(self) -> None:
+        await super().stop()
+        stopper = getattr(self._source, "stop", None)
+        if callable(stopper):
+            result = stopper()
+            if asyncio.iscoroutine(result):
+                await result

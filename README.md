@@ -206,6 +206,25 @@ Need to stream without a screen? Use the Python headless broadcaster. It capture
    - On macOS (`ffmpeg` + `avfoundation`), set e.g. `--video-device "0:" --video-format avfoundation` and `--audio-device ":0" --audio-format avfoundation`.
     - Sur Raspberry Pi, vérifie la logique ALSA avec `arecord -L`. Utilise par exemple `--audio-device plughw:CARD=Device,DEV=0` et assure-toi que `/usr/share/alsa/alsa.conf` est présent (le script définit `ALSA_CONFIG_PATH` automatiquement si besoin).
     - Pour un flux plus net et fluide, augmente la résolution (`--video-resolution 1920x1080`), la cadence (`--video-fps 30`), le débit (`--video-max-bitrate 4000000`) et, sur les webcams USB, exige un flux MJPEG matériel (`--video-input-format mjpeg`). Tu peux aussi forcer un codec (`--video-preferred-codec H264`) si ta pile FFmpeg dispose de l’encodeur approprié.
+    - Améliore l'audio en jouant sur `--audio-gain-db 12` (gain), `--audio-noise-gate-db -55` (supprime les parasites faibles) et `--audio-highpass 120` (coupure des grondements <120 Hz).
+    - Exemple concret sur Raspberry Pi (bonne fluidité sans surcharger le CPU) :
+      ```bash
+      python run_broadcaster.py \
+        --signaling wss://192.168.1.9:3443/ws \
+        --room baby \
+        --no-ssl-verify \
+        --video-device /dev/video0 \
+        --video-format v4l2 \
+        --video-resolution 1280x720 \
+        --video-fps 20 \
+        --video-max-bitrate 2500000 \
+        --video-preferred-codec VP8 \
+        --audio-device plughw:CARD=Device,DEV=0 \
+        --audio-format alsa \
+        --audio-sample-rate 48000 \
+        --audio-channels 1 \
+        --log-level INFO
+      ```
 
 Once running, the CLI auto-reconnects to the signaling server and starts sending offers whenever a viewer opens `https://<server>:3443/viewer`. No browser is required on the Raspberry Pi.
 
