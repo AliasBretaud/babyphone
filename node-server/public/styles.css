@@ -35,6 +35,13 @@ main {
   background: #263041;
   color: var(--fg);
 }
+.btn.danger {
+  background: #b33a3a;
+}
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
 .wrap {
   max-width: 900px;
   margin: 0 auto;

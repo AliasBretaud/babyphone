@@ -219,6 +219,8 @@
       this.retryTimer = null;
       this.retryAttempts = 0;
       this.currentBroadcasterId = null;
+      this.shutdownButton = null;
+      this.awaitingShutdownAck = false;
     }
 
     async join(room) {
@@ -245,6 +247,10 @@
       qs("joinBtn").disabled = false;
       qs("leaveBtn").disabled = true;
       setViewerError(null);
+      if (this.shutdownButton) {
+        this.shutdownButton.disabled = true;
+        this.awaitingShutdownAck = false;
+      }
     }
 
     _initWebSocket() {
@@ -308,6 +314,9 @@
       console.warn(`Flux interrompu (${reason}), tentative de reconnexion...`);
       this._createPeerConnection();
       this._startRetry();
+      if (this.shutdownButton) {
+        this.shutdownButton.disabled = true;
+      }
     }
 
     _startRetry() {
@@ -354,11 +363,18 @@
       this._stopRetry();
       this.retryAttempts = 0;
       setViewerError(null);
+      if (this.shutdownButton) {
+        this.shutdownButton.disabled = false;
+        this.awaitingShutdownAck = false;
+      }
     }
 
     onWS(msg) {
       if (msg.type === "offer") {
         this.currentBroadcasterId = msg.fromId;
+        if (this.shutdownButton && !this.awaitingShutdownAck) {
+          this.shutdownButton.disabled = false;
+        }
         const offer = new RTCSessionDescription(msg.offer);
         this.pc
           .setRemoteDescription(offer)
@@ -384,7 +400,75 @@
       ) {
         this.currentBroadcasterId = null;
         this._handleStreamInterrupted("diffuseur indisponible");
+        if (this.shutdownButton) {
+          this.shutdownButton.disabled = true;
+        }
+      } else if (msg.type === "shutdown-ack") {
+        this.awaitingShutdownAck = false;
+        alert(
+          "Le Raspberry Pi va s'éteindre. Le flux sera interrompu sous peu."
+        );
+      } else if (msg.type === "shutdown-denied") {
+        this.awaitingShutdownAck = false;
+        if (this.shutdownButton) {
+          this.shutdownButton.disabled = false;
+        }
+        const reason = msg.reason ? String(msg.reason) : "non spécifiée";
+        alert(
+          `La demande d'arrêt a été refusée par le diffuseur (motif: ${reason}).`
+        );
+      } else if (msg.type === "shutdown-error") {
+        this.awaitingShutdownAck = false;
+        if (this.shutdownButton) {
+          this.shutdownButton.disabled = false;
+        }
+        alert(
+          "Le diffuseur n'a pas pu exécuter la commande d'arrêt (voir les logs)."
+        );
       }
+    }
+
+    async requestShutdown() {
+      if (!this.currentBroadcasterId) {
+        throw new Error("Aucun diffuseur n'est connecté.");
+      }
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        throw new Error("Connexion de signalisation indisponible.");
+      }
+      this.awaitingShutdownAck = true;
+      this.ws.send(
+        JSON.stringify({
+          type: "shutdown",
+          targetId: this.currentBroadcasterId,
+        })
+      );
+    }
+
+    attachShutdownButton(button) {
+      this.shutdownButton = button;
+      if (!button) return;
+      button.onclick = async () => {
+        if (
+          !confirm(
+            "Confirmer l'arrêt complet du Raspberry Pi ?\nAssurez-vous que personne n'utilise le flux."
+          )
+        ) {
+          return;
+        }
+        if (this.awaitingShutdownAck) {
+          return;
+        }
+        button.disabled = true;
+        try {
+          await this.requestShutdown();
+        } catch (err) {
+          console.error(err);
+          alert(
+            "Impossible d'envoyer la demande d'arrêt (vérifiez la connexion)."
+          );
+          button.disabled = false;
+        }
+      };
     }
   }
 
@@ -398,6 +482,7 @@
       const v = new Viewer();
       const remote = qs("remote");
       const overlay = qs("playOverlay");
+      const shutdownBtn = qs("shutdownBtn");
       qs("joinBtn").onclick = () => v.join(room);
       qs("leaveBtn").onclick = () => v.leave();
       qs("playBtn").onclick = async () => {
@@ -420,6 +505,10 @@
       remote.addEventListener("pause", () =>
         overlay.classList.remove("hidden")
       );
+      if (shutdownBtn) {
+        shutdownBtn.disabled = true;
+        v.attachShutdownButton(shutdownBtn);
+      }
     }
   };
 })();

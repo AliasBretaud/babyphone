@@ -88,7 +88,7 @@ Notable options:
 - `--video-max-bitrate 4000000` (ou plus) pour augmenter la netteté, `--video-min-bitrate` pour garantir un plancher, `--video-preferred-codec H264` pour prioriser un codec spécifique (si disponible dans FFmpeg/PyAV), `--video-input-format mjpeg` pour forcer un flux MJPEG matériel via v4l2.
 - `--audio-device hw:1,0` for USB mics exposed by ALSA.
 - `--audio-format alsa` (Linux) or `--audio-format avfoundation` (macOS) to force a specific FFmpeg backend.
-- `--audio-gain-db 10`, `--audio-noise-gate-db -50`, `--audio-highpass 120`, `--audio-lowpass 6000`, et `--audio-denoise --audio-denoise-floor -32` pour réduire le souffle/ventilateur sans trop écraser la voix.
+- `--audio-gain-db 10`, `--audio-noise-gate-db -50`, `--audio-highpass 120`, `--audio-lowpass 6000`, `--audio-denoise --audio-denoise-floor -32` pour réduire le souffle/ventilateur, et `--allow-remote-shutdown` pour autoriser l'arrêt distant via la page Viewer.
 - `--no-video` / `--no-audio` to disable a track entirely.
 - `BROADCASTER_*` environment variables mirror every CLI flag (documentation below).
 - Sur Raspberry Pi, vérifie les périphériques avec `arecord -L` et passe un nom explicite (`plughw:CARD=Device,DEV=0`, `sysdefault:CARD=Device`, etc.). Le script positionne automatiquement `ALSA_CONFIG_PATH` vers `/usr/share/alsa/alsa.conf` si nécessaire pour éviter l’erreur `Cannot access file /tmp/vendor/share/alsa/alsa.conf`.
@@ -174,6 +174,7 @@ Every analyzer flag has an environment counterpart:
 | `BROADCASTER_AUDIO_LOWPASS_HZ`   | Low-pass cutoff frequency (Hz)                    | unset                         |
 | `BROADCASTER_AUDIO_DENOISE`      | `true` / `false` to enable FFmpeg `afftdn` filter  | `false`                       |
 | `BROADCASTER_AUDIO_DENOISE_FLOOR`| Noise floor parameter for `afftdn` (dB)           | `-28`                         |
+| `BROADCASTER_ALLOW_SHUTDOWN`     | `true` / `false` to accept remote shutdown        | `false`                       |
 | `BROADCASTER_AUDIO_ENABLED`      | `true`/`false` to toggle audio capture            | `true`                        |
 
 ---

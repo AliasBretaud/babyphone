@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional
 
 import sys
+import subprocess
 
 import numpy as np
 import websockets
@@ -145,6 +146,7 @@ class BroadcasterConfig:
     audio_lowpass_hz: Optional[float] = None
     audio_ffmpeg_denoise: bool = False
     audio_ffmpeg_denoise_floor: float = -28.0
+    allow_remote_shutdown: bool = False
 
     @classmethod
     def from_env(cls) -> "BroadcasterConfig":
@@ -242,6 +244,10 @@ class BroadcasterConfig:
                 cfg.audio_ffmpeg_denoise_floor = float(denoise_floor)
             except ValueError:
                 pass
+        cfg.allow_remote_shutdown = _parse_bool(
+            os.getenv("BROADCASTER_ALLOW_SHUTDOWN"),
+            default=cfg.allow_remote_shutdown,
+        )
         cfg.audio_enabled = _parse_bool(
             os.getenv("BROADCASTER_AUDIO_ENABLED"),
             default=cfg.audio_enabled and bool(cfg.audio_device),
@@ -423,6 +429,19 @@ class BroadcasterConfig:
             default=env_cfg.audio_ffmpeg_denoise_floor,
             help="Noise floor for afftdn filter (dB, default -28).",
         )
+        parser.add_argument(
+            "--allow-remote-shutdown",
+            dest="allow_remote_shutdown",
+            action="store_true",
+            help="Allow shutdown commands received via signaling WebSocket.",
+        )
+        parser.add_argument(
+            "--no-remote-shutdown",
+            dest="allow_remote_shutdown",
+            action="store_false",
+            help="Disable shutdown commands received via signaling.",
+        )
+        parser.set_defaults(allow_remote_shutdown=env_cfg.allow_remote_shutdown)
         audio_toggle = parser.add_mutually_exclusive_group()
         audio_toggle.add_argument(
             "--no-audio",
@@ -478,6 +497,7 @@ class BroadcasterConfig:
             audio_lowpass_hz=audio_lowpass,
             audio_ffmpeg_denoise=args.audio_ffmpeg_denoise,
             audio_ffmpeg_denoise_floor=args.audio_denoise_floor,
+            allow_remote_shutdown=args.allow_remote_shutdown,
         )
 
 
@@ -563,6 +583,8 @@ class HeadlessBroadcaster:
                 await self._handle_remote_candidate(message)
             elif msg_type == "peer-left":
                 await self._handle_peer_left(message)
+            elif msg_type == "shutdown":
+                await self._handle_shutdown_request(message)
 
     async def _handle_viewer_joined(self, viewer_id: str) -> None:
         await self._close_peer(viewer_id)
@@ -670,6 +692,36 @@ class HeadlessBroadcaster:
         peer_id = message.get("peerId")
         if peer_id:
             await self._close_peer(peer_id)
+
+    async def _handle_shutdown_request(self, message: dict) -> None:
+        origin = message.get("fromId")
+        if not self.config.allow_remote_shutdown:
+            logging.info("Shutdown request ignored (disabled).")
+            if origin:
+                await self._send(
+                    {
+                        "type": "shutdown-denied",
+                        "targetId": origin,
+                        "reason": "disabled",
+                    }
+                )
+            return
+        logging.warning(
+            "Shutdown requested via signaling (from=%s). Scheduling system halt.",
+            origin,
+        )
+        success = await self._schedule_shutdown()
+        if origin:
+            if success:
+                await self._send({"type": "shutdown-ack", "targetId": origin})
+            else:
+                await self._send(
+                    {
+                        "type": "shutdown-error",
+                        "targetId": origin,
+                        "reason": "command_failed",
+                    }
+                )
 
     async def _send(self, payload: dict) -> None:
         if _ws_is_closed(self._ws):
@@ -818,6 +870,20 @@ class HeadlessBroadcaster:
                     self.config.video_preferred_codec,
                     exc_info=True,
                 )
+
+    async def _schedule_shutdown(self) -> bool:
+        logging.warning("Initiating system shutdown...")
+        try:
+            subprocess.Popen(
+                ["sudo", "/sbin/shutdown", "-h", "now"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            logging.exception("Failed to execute shutdown command")
+            return False
+        self._stop_requested = True
+        return True
 
 
 class AudioEffectsTrack(AudioStreamTrack):

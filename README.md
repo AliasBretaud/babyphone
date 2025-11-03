@@ -206,7 +206,7 @@ Need to stream without a screen? Use the Python headless broadcaster. It capture
    - On macOS (`ffmpeg` + `avfoundation`), set e.g. `--video-device "0:" --video-format avfoundation` and `--audio-device ":0" --audio-format avfoundation`.
     - Sur Raspberry Pi, vérifie la logique ALSA avec `arecord -L`. Utilise par exemple `--audio-device plughw:CARD=Device,DEV=0` et assure-toi que `/usr/share/alsa/alsa.conf` est présent (le script définit `ALSA_CONFIG_PATH` automatiquement si besoin).
     - Pour un flux plus net et fluide, augmente la résolution (`--video-resolution 1920x1080`), la cadence (`--video-fps 30`), le débit (`--video-max-bitrate 4000000`) et, sur les webcams USB, exige un flux MJPEG matériel (`--video-input-format mjpeg`). Tu peux aussi forcer un codec (`--video-preferred-codec H264`) si ta pile FFmpeg dispose de l’encodeur approprié.
-   - Améliore l'audio en jouant sur `--audio-gain-db 10`, `--audio-noise-gate-db -50`, `--audio-highpass 120`, `--audio-lowpass 6000`, et active le débruitage FFmpeg (`--audio-denoise --audio-denoise-floor -32`) pour atténuer le souffle/fan constant.
+   - Améliore l'audio en jouant sur `--audio-gain-db 10`, `--audio-noise-gate-db -50`, `--audio-highpass 120`, `--audio-lowpass 6000`, et active le débruitage FFmpeg (`--audio-denoise --audio-denoise-floor -32`). Ajoute `--allow-remote-shutdown` pour autoriser l'arrêt du Pi depuis la page Viewer.
     - Exemple concret sur Raspberry Pi (bonne fluidité sans surcharger le CPU) :
       ```bash
       python run_broadcaster.py \
@@ -229,6 +229,7 @@ Need to stream without a screen? Use the Python headless broadcaster. It capture
         --audio-lowpass 6000 \
         --audio-denoise \
         --audio-denoise-floor -32 \
+        --allow-remote-shutdown \
         --log-level INFO
       ```
 
@@ -238,6 +239,13 @@ Once running, the CLI auto-reconnects to the signaling server and starts sending
 cd node-server
 CERT_HOSTNAMES="localhost 127.0.0.1 192.168.1.23 baby.local" docker compose up -d --build
 ```
+
+### 🔌 Remote shutdown depuis le Viewer
+
+- Le bouton **Shutdown Pi** de la page Viewer envoie un message via WebSocket au diffuseur Python.
+- Lance le broadcaster avec `--allow-remote-shutdown` (ou l’option d’environnement `BROADCASTER_ALLOW_SHUTDOWN=1`). Sans ce flag, la demande est ignorée.
+- Assure-toi que l’utilisateur qui exécute `run_broadcaster.py` peut invoquer `sudo /sbin/shutdown -h now` sans mot de passe (ex. `raspberrypi ALL=(ALL) NOPASSWD: /sbin/shutdown`).
+- Après confirmation, le Raspberry Pi s’éteindra dans les secondes qui suivent ; attends que la LED soit fixe avant de couper l’alimentation.
 
 **How it works**
 
