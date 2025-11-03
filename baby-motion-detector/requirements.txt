@@ -3,8 +3,8 @@
 # Keep the interpreter <= 3.11 when creating the virtualenv.
 aiortc==1.14.0
 websockets==15.0.1
-mediapipe==0.10.21 ; python_version < "3.12" and platform_machine not in ("armv7l", "aarch64")
-mediapipe==0.10.18 ; python_version < "3.12" and platform_machine in ("armv7l", "aarch64")
+mediapipe==0.10.21 ; python_version < "3.12" and platform_machine != "armv7l" and platform_machine != "aarch64"
+mediapipe==0.10.18 ; python_version < "3.12" and (platform_machine == "armv7l" or platform_machine == "aarch64")
 opencv-python==4.9.0.80
 numpy==1.26.4
 scipy==1.16.2

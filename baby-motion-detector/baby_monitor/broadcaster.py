@@ -499,11 +499,20 @@ class HeadlessBroadcaster:
                 self.config.audio_format,
                 audio_options,
             )
-            self._audio_player = MediaPlayer(
-                self.config.audio_device,
-                format=self.config.audio_format,
-                options=audio_options,
-            )
+            try:
+                self._audio_player = MediaPlayer(
+                    self.config.audio_device,
+                    format=self.config.audio_format,
+                    options=audio_options,
+                )
+            except Exception:
+                logging.error(
+                    "Unable to open audio device %s. "
+                    "Check `arecord -L` for valid ALSA names or launch with --no-audio.",
+                    self.config.audio_device,
+                    exc_info=True,
+                )
+                raise
 
     async def _shutdown_media(self) -> None:
         players = [self._video_player, self._audio_player]
@@ -511,9 +520,11 @@ class HeadlessBroadcaster:
             if not player:
                 continue
             try:
-                result = player.stop()
-                if asyncio.iscoroutine(result):
-                    await result
+                closer = getattr(player, "stop", None) or getattr(player, "close", None)
+                if callable(closer):
+                    result = closer()
+                    if asyncio.iscoroutine(result):
+                        await result
             except Exception:
                 logging.warning("Failed to stop media player cleanly", exc_info=True)
         self._video_player = None
