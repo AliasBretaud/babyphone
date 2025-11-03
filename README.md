@@ -206,7 +206,7 @@ Need to stream without a screen? Use the Python headless broadcaster. It capture
    - On macOS (`ffmpeg` + `avfoundation`), set e.g. `--video-device "0:" --video-format avfoundation` and `--audio-device ":0" --audio-format avfoundation`.
     - Sur Raspberry Pi, vérifie la logique ALSA avec `arecord -L`. Utilise par exemple `--audio-device plughw:CARD=Device,DEV=0` et assure-toi que `/usr/share/alsa/alsa.conf` est présent (le script définit `ALSA_CONFIG_PATH` automatiquement si besoin).
     - Pour un flux plus net et fluide, augmente la résolution (`--video-resolution 1920x1080`), la cadence (`--video-fps 30`), le débit (`--video-max-bitrate 4000000`) et, sur les webcams USB, exige un flux MJPEG matériel (`--video-input-format mjpeg`). Tu peux aussi forcer un codec (`--video-preferred-codec H264`) si ta pile FFmpeg dispose de l’encodeur approprié.
-    - Améliore l'audio en jouant sur `--audio-gain-db 12` (gain), `--audio-noise-gate-db -55` (supprime les parasites faibles) et `--audio-highpass 120` (coupure des grondements <120 Hz).
+   - Améliore l'audio en jouant sur `--audio-gain-db 10`, `--audio-noise-gate-db -50`, `--audio-highpass 120`, `--audio-lowpass 6000`, et active le débruitage FFmpeg (`--audio-denoise --audio-denoise-floor -32`) pour atténuer le souffle/fan constant.
     - Exemple concret sur Raspberry Pi (bonne fluidité sans surcharger le CPU) :
       ```bash
       python run_broadcaster.py \
@@ -223,6 +223,12 @@ Need to stream without a screen? Use the Python headless broadcaster. It capture
         --audio-format alsa \
         --audio-sample-rate 48000 \
         --audio-channels 1 \
+        --audio-gain-db 10 \
+        --audio-noise-gate-db -50 \
+        --audio-highpass 120 \
+        --audio-lowpass 6000 \
+        --audio-denoise \
+        --audio-denoise-floor -32 \
         --log-level INFO
       ```
 

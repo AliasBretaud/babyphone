@@ -142,6 +142,9 @@ class BroadcasterConfig:
     audio_gain_db: float = 0.0
     audio_noise_gate_db: Optional[float] = None
     audio_highpass_hz: Optional[float] = None
+    audio_lowpass_hz: Optional[float] = None
+    audio_ffmpeg_denoise: bool = False
+    audio_ffmpeg_denoise_floor: float = -28.0
 
     @classmethod
     def from_env(cls) -> "BroadcasterConfig":
@@ -221,6 +224,24 @@ class BroadcasterConfig:
                 hp_val = cfg.audio_highpass_hz
             else:
                 cfg.audio_highpass_hz = hp_val if hp_val > 0 else None
+        lp_env = os.getenv("BROADCASTER_AUDIO_LOWPASS_HZ")
+        if lp_env is not None and lp_env.strip():
+            try:
+                lp_val = float(lp_env)
+            except ValueError:
+                lp_val = cfg.audio_lowpass_hz
+            else:
+                cfg.audio_lowpass_hz = lp_val if lp_val > 0 else None
+        cfg.audio_ffmpeg_denoise = _parse_bool(
+            os.getenv("BROADCASTER_AUDIO_DENOISE"),
+            default=cfg.audio_ffmpeg_denoise,
+        )
+        denoise_floor = os.getenv("BROADCASTER_AUDIO_DENOISE_FLOOR")
+        if denoise_floor is not None and denoise_floor.strip():
+            try:
+                cfg.audio_ffmpeg_denoise_floor = float(denoise_floor)
+            except ValueError:
+                pass
         cfg.audio_enabled = _parse_bool(
             os.getenv("BROADCASTER_AUDIO_ENABLED"),
             default=cfg.audio_enabled and bool(cfg.audio_device),
@@ -377,6 +398,31 @@ class BroadcasterConfig:
             default=env_cfg.audio_highpass_hz or 0.0,
             help="High-pass filter cutoff in Hz (0 disables the filter).",
         )
+        parser.add_argument(
+            "--audio-lowpass",
+            type=float,
+            default=env_cfg.audio_lowpass_hz or 0.0,
+            help="Low-pass filter cutoff in Hz (0 disables the filter).",
+        )
+        parser.add_argument(
+            "--audio-denoise",
+            dest="audio_ffmpeg_denoise",
+            action="store_true",
+            help="Enable FFmpeg frequency-domain denoising (afftdn).",
+        )
+        parser.add_argument(
+            "--no-audio-denoise",
+            dest="audio_ffmpeg_denoise",
+            action="store_false",
+            help="Disable FFmpeg denoising (default follows env).",
+        )
+        parser.set_defaults(audio_ffmpeg_denoise=env_cfg.audio_ffmpeg_denoise)
+        parser.add_argument(
+            "--audio-denoise-floor",
+            type=float,
+            default=env_cfg.audio_ffmpeg_denoise_floor,
+            help="Noise floor for afftdn filter (dB, default -28).",
+        )
         audio_toggle = parser.add_mutually_exclusive_group()
         audio_toggle.add_argument(
             "--no-audio",
@@ -404,6 +450,7 @@ class BroadcasterConfig:
             args.audio_enabled = False
             audio_device = None
         audio_highpass = args.audio_highpass if args.audio_highpass and args.audio_highpass > 0 else None
+        audio_lowpass = args.audio_lowpass if args.audio_lowpass and args.audio_lowpass > 0 else None
 
         return cls(
             signaling_url=args.signaling,
@@ -428,6 +475,9 @@ class BroadcasterConfig:
             audio_gain_db=args.audio_gain_db,
             audio_noise_gate_db=args.audio_noise_gate_db,
             audio_highpass_hz=audio_highpass,
+            audio_lowpass_hz=audio_lowpass,
+            audio_ffmpeg_denoise=args.audio_ffmpeg_denoise,
+            audio_ffmpeg_denoise_floor=args.audio_denoise_floor,
         )
 
 
@@ -538,6 +588,7 @@ class HeadlessBroadcaster:
                     gain_db=self.config.audio_gain_db,
                     noise_gate_db=self.config.audio_noise_gate_db,
                     highpass_hz=self.config.audio_highpass_hz,
+                    lowpass_hz=self.config.audio_lowpass_hz,
                 )
             pc.addTrack(audio_track)
 
@@ -652,6 +703,21 @@ class HeadlessBroadcaster:
                 audio_options["sample_rate"] = str(self.config.audio_sample_rate)
             if self.config.audio_channels:
                 audio_options["channels"] = str(self.config.audio_channels)
+            filters_chain: List[str] = []
+            if self.config.audio_ffmpeg_denoise:
+                if self.config.audio_highpass_hz:
+                    filters_chain.append(
+                        f"highpass=f={float(self.config.audio_highpass_hz):.1f}"
+                    )
+                if self.config.audio_lowpass_hz:
+                    filters_chain.append(
+                        f"lowpass=f={float(self.config.audio_lowpass_hz):.1f}"
+                    )
+                filters_chain.append(
+                    f"afftdn=nf={float(self.config.audio_ffmpeg_denoise_floor):.1f}"
+                )
+            if filters_chain:
+                audio_options["audio_filters"] = ",".join(filters_chain)
             logging.info(
                 "Opening audio device %s (format=%s, options=%s)",
                 self.config.audio_device,
@@ -764,6 +830,7 @@ class AudioEffectsTrack(AudioStreamTrack):
         gain_db: float = 0.0,
         noise_gate_db: Optional[float] = None,
         highpass_hz: Optional[float] = None,
+        lowpass_hz: Optional[float] = None,
     ) -> None:
         super().__init__()
         self._source = source
@@ -772,21 +839,56 @@ class AudioEffectsTrack(AudioStreamTrack):
             10 ** (noise_gate_db / 20.0) if noise_gate_db is not None else None
         )
         self._highpass_hz = highpass_hz if highpass_hz and highpass_hz > 0 else None
+        self._lowpass_hz = lowpass_hz if lowpass_hz and lowpass_hz > 0 else None
         self._hp_b: Optional[np.ndarray] = None
         self._hp_a: Optional[np.ndarray] = None
         self._hp_state: Optional[List[np.ndarray]] = None
+        self._lp_b: Optional[np.ndarray] = None
+        self._lp_a: Optional[np.ndarray] = None
+        self._lp_state: Optional[List[np.ndarray]] = None
+        self._gate_level: float = 1.0
+        self._gate_prev: float = 1.0
+        self._gate_floor: float = 0.02
+        self._gate_attack = 0.25
+        self._gate_release = 0.08
 
-    def _ensure_highpass(self, sample_rate: int, channels: int) -> None:
-        if self._highpass_hz is None:
-            return
+    def _ensure_filters(self, sample_rate: int, channels: int) -> None:
         nyquist = sample_rate / 2.0
-        cutoff = min(self._highpass_hz, nyquist * 0.95)
-        if self._hp_b is None or self._hp_state is None or len(self._hp_state) != channels:
-            self._hp_b, self._hp_a = signal.butter(2, cutoff / nyquist, btype="highpass")
-            self._hp_state = [
-                signal.lfilter_zi(self._hp_b, self._hp_a).astype(np.float32)
-                for _ in range(channels)
-            ]
+        if self._highpass_hz:
+            cutoff_hp = min(self._highpass_hz, nyquist * 0.95)
+            if (
+                self._hp_b is None
+                or self._hp_state is None
+                or len(self._hp_state) != channels
+            ):
+                self._hp_b, self._hp_a = signal.butter(
+                    2, cutoff_hp / nyquist, btype="highpass"
+                )
+                self._hp_state = [
+                    signal.lfilter_zi(self._hp_b, self._hp_a).astype(np.float32)
+                    for _ in range(channels)
+                ]
+        else:
+            self._hp_b = self._hp_a = None
+            self._hp_state = None
+
+        if self._lowpass_hz:
+            cutoff_lp = min(self._lowpass_hz, nyquist * 0.95)
+            if (
+                self._lp_b is None
+                or self._lp_state is None
+                or len(self._lp_state) != channels
+            ):
+                self._lp_b, self._lp_a = signal.butter(
+                    3, cutoff_lp / nyquist, btype="lowpass"
+                )
+                self._lp_state = [
+                    signal.lfilter_zi(self._lp_b, self._lp_a).astype(np.float32)
+                    for _ in range(channels)
+                ]
+        else:
+            self._lp_b = self._lp_a = None
+            self._lp_state = None
 
     async def recv(self) -> AudioFrame:
         frame = await self._source.recv()
@@ -799,24 +901,49 @@ class AudioEffectsTrack(AudioStreamTrack):
         floats = samples.astype(np.float32) / 32768.0
         channels = floats.shape[0]
 
-        if self._highpass_hz:
-            self._ensure_highpass(frame.sample_rate, channels)
-            if self._hp_b is not None and self._hp_state is not None:
-                for idx in range(channels):
-                    floats[idx], self._hp_state[idx] = signal.lfilter(
-                        self._hp_b,
-                        self._hp_a,
-                        floats[idx],
-                        zi=self._hp_state[idx],
-                    )
+        self._ensure_filters(frame.sample_rate, channels)
+        if self._hp_b is not None and self._hp_state is not None:
+            for idx in range(channels):
+                floats[idx], self._hp_state[idx] = signal.lfilter(
+                    self._hp_b,
+                    self._hp_a,
+                    floats[idx],
+                    zi=self._hp_state[idx],
+                )
+
+        if self._lp_b is not None and self._lp_state is not None:
+            for idx in range(channels):
+                floats[idx], self._lp_state[idx] = signal.lfilter(
+                    self._lp_b,
+                    self._lp_a,
+                    floats[idx],
+                    zi=self._lp_state[idx],
+                )
 
         if self._noise_gate is not None:
-            rms = np.sqrt(np.mean(floats**2, axis=-1, keepdims=True))
-            floats = np.where(rms < self._noise_gate, 0.0, floats)
+            rms = np.sqrt(np.mean(floats**2, axis=-1))
+            avg_rms = float(np.mean(rms))
+            if avg_rms <= 1e-8:
+                target = 0.0
+            elif avg_rms >= self._noise_gate:
+                target = 1.0
+            else:
+                target = max(self._gate_floor, (avg_rms / self._noise_gate) ** 0.5)
+            coeff = self._gate_attack if target > self._gate_level else self._gate_release
+            self._gate_level += coeff * (target - self._gate_level)
+            envelope = np.linspace(
+                self._gate_prev,
+                self._gate_level,
+                floats.shape[-1],
+                dtype=np.float32,
+            )
+            floats *= envelope
+            self._gate_prev = float(envelope[-1])
 
         if self._gain != 1.0:
             floats *= self._gain
 
+        floats = np.tanh(floats)  # soft clip to avoid harsh saturation
         floats = np.clip(floats, -1.0, 1.0).astype(np.float32)
         int_samples = (floats * 32767.0).astype(np.int16)
         if reshape:
