@@ -204,6 +204,8 @@ Need to stream without a screen? Use the Python headless broadcaster. It capture
    - `--no-video` or `--no-audio` to disable a track (e.g., audio-only monitor).
    - Environment variables (`BROADCASTER_*`) mirror every CLI flag for service files.
    - On macOS (`ffmpeg` + `avfoundation`), set e.g. `--video-device "0:" --video-format avfoundation` and `--audio-device ":0" --audio-format avfoundation`.
+    - Sur Raspberry Pi, vérifie la logique ALSA avec `arecord -L`. Utilise par exemple `--audio-device plughw:CARD=Device,DEV=0` et assure-toi que `/usr/share/alsa/alsa.conf` est présent (le script définit `ALSA_CONFIG_PATH` automatiquement si besoin).
+    - Pour un flux plus net et fluide, augmente la résolution (`--video-resolution 1920x1080`), la cadence (`--video-fps 30`), le débit (`--video-max-bitrate 4000000`) et, sur les webcams USB, exige un flux MJPEG matériel (`--video-input-format mjpeg`). Tu peux aussi forcer un codec (`--video-preferred-codec H264`) si ta pile FFmpeg dispose de l’encodeur approprié.
 
 Once running, the CLI auto-reconnects to the signaling server and starts sending offers whenever a viewer opens `https://<server>:3443/viewer`. No browser is required on the Raspberry Pi.
 

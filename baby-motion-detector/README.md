@@ -85,10 +85,12 @@ Notable options:
 
 - `--video-resolution 1920x1080` / `--video-fps 25` to change capture quality.
 - `--video-format avfoundation --video-device "0:"` on macOS (or use `:0` for audio) when using FFmpeg's avfoundation backend.
+- `--video-max-bitrate 4000000` (ou plus) pour augmenter la netteté, `--video-min-bitrate` pour garantir un plancher, `--video-preferred-codec H264` pour prioriser un codec spécifique (si disponible dans FFmpeg/PyAV), `--video-input-format mjpeg` pour forcer un flux MJPEG matériel via v4l2.
 - `--audio-device hw:1,0` for USB mics exposed by ALSA.
 - `--audio-format alsa` (Linux) or `--audio-format avfoundation` (macOS) to force a specific FFmpeg backend.
 - `--no-video` / `--no-audio` to disable a track entirely.
 - `BROADCASTER_*` environment variables mirror every CLI flag (documentation below).
+- Sur Raspberry Pi, vérifie les périphériques avec `arecord -L` et passe un nom explicite (`plughw:CARD=Device,DEV=0`, `sysdefault:CARD=Device`, etc.). Le script positionne automatiquement `ALSA_CONFIG_PATH` vers `/usr/share/alsa/alsa.conf` si nécessaire pour éviter l’erreur `Cannot access file /tmp/vendor/share/alsa/alsa.conf`.
 
 ---
 
@@ -156,6 +158,10 @@ Every analyzer flag has an environment counterpart:
 | `BROADCASTER_VIDEO_FORMAT`       | FFmpeg format for the camera                      | Linux: `v4l2`, otherwise unset        |
 | `BROADCASTER_VIDEO_RESOLUTION`   | Capture resolution `WIDTHxHEIGHT`                 | `1280x720`                    |
 | `BROADCASTER_VIDEO_FPS`          | Capture frame rate                                | `30`                          |
+| `BROADCASTER_VIDEO_MAX_BITRATE`  | Maximum video bitrate (bps)                       | `3000000`                     |
+| `BROADCASTER_VIDEO_MIN_BITRATE`  | Minimum video bitrate (bps)                       | unset                         |
+| `BROADCASTER_VIDEO_PREFERRED_CODEC` | Preferred codec (`H264`, `VP8`, …)             | unset                         |
+| `BROADCASTER_VIDEO_INPUT_FORMAT` | FFmpeg input pixel format (e.g., `mjpeg`)         | unset                         |
 | `BROADCASTER_VIDEO_ENABLED`      | `true`/`false` to toggle video capture            | `true`                        |
 | `BROADCASTER_AUDIO_DEVICE`       | FFmpeg input for the microphone                   | Linux: `default`, otherwise unset     |
 | `BROADCASTER_AUDIO_FORMAT`       | FFmpeg format for the mic                         | Linux: `alsa`, otherwise unset        |

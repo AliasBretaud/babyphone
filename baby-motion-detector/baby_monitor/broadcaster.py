@@ -14,7 +14,12 @@ import sys
 import websockets
 from websockets import WebSocketClientProtocol
 
-from aiortc import RTCConfiguration, RTCPeerConnection, RTCSessionDescription
+from aiortc import (
+    RTCConfiguration,
+    RTCPeerConnection,
+    RTCSessionDescription,
+    RTCRtpSender,
+)
 from aiortc.contrib.media import MediaPlayer, MediaRelay
 from aiortc.rtcconfiguration import RTCIceServer
 from aiortc.sdp import candidate_from_sdp
@@ -23,6 +28,38 @@ try:
     from websockets.protocol import State as WSState
 except Exception:  # pragma: no cover - version-dependent import
     WSState = None
+
+# Ensure ALSA configuration is reachable when bundled ffmpeg looks in /tmp/vendor.
+if sys.platform.startswith("linux"):
+    if "ALSA_CONFIG_PATH" not in os.environ:
+        for candidate in (
+            "/usr/share/alsa/alsa.conf",
+            "/usr/local/share/alsa/alsa.conf",
+            "/etc/asound.conf",
+        ):
+            if os.path.exists(candidate):
+                os.environ["ALSA_CONFIG_PATH"] = candidate
+                break
+
+    if "ALSA_CONFIG_DIR" not in os.environ:
+        for candidate in (
+            "/usr/share/alsa",
+            "/usr/local/share/alsa",
+        ):
+            if os.path.isdir(candidate):
+                os.environ["ALSA_CONFIG_DIR"] = candidate
+                break
+
+    if "ALSA_PLUGIN_DIR" not in os.environ:
+        for candidate in (
+            "/usr/lib/arm-linux-gnueabihf/alsa-lib",
+            "/usr/lib/aarch64-linux-gnu/alsa-lib",
+            "/usr/lib64/alsa-lib",
+            "/usr/lib/alsa-lib",
+        ):
+            if os.path.isdir(candidate):
+                os.environ["ALSA_PLUGIN_DIR"] = candidate
+                break
 
 if sys.platform.startswith("linux"):
     DEFAULT_VIDEO_DEVICE = "/dev/video0"
@@ -87,6 +124,10 @@ class BroadcasterConfig:
     video_format: Optional[str] = DEFAULT_VIDEO_FORMAT
     video_resolution: str = "1280x720"
     video_fps: int = 30
+    video_max_bitrate: int = 3_000_000
+    video_min_bitrate: Optional[int] = None
+    video_preferred_codec: Optional[str] = None
+    video_input_format: Optional[str] = None
 
     audio_enabled: bool = True
     audio_device: Optional[str] = DEFAULT_AUDIO_DEVICE
@@ -117,6 +158,22 @@ class BroadcasterConfig:
         )
         cfg.video_fps = int(
             os.getenv("BROADCASTER_VIDEO_FPS", cfg.video_fps) or cfg.video_fps
+        )
+        cfg.video_max_bitrate = int(
+            os.getenv("BROADCASTER_VIDEO_MAX_BITRATE", cfg.video_max_bitrate)
+            or cfg.video_max_bitrate
+        )
+        vmin = os.getenv("BROADCASTER_VIDEO_MIN_BITRATE", "")
+        if vmin:
+            try:
+                cfg.video_min_bitrate = int(vmin)
+            except ValueError:
+                pass
+        cfg.video_preferred_codec = os.getenv(
+            "BROADCASTER_VIDEO_PREFERRED_CODEC", cfg.video_preferred_codec
+        )
+        cfg.video_input_format = os.getenv(
+            "BROADCASTER_VIDEO_INPUT_FORMAT", cfg.video_input_format
         )
         cfg.video_enabled = _parse_bool(
             os.getenv("BROADCASTER_VIDEO_ENABLED"),
@@ -204,6 +261,28 @@ class BroadcasterConfig:
             default=env_cfg.video_fps,
             help="Capture frame rate (default: 30).",
         )
+        parser.add_argument(
+            "--video-max-bitrate",
+            type=int,
+            default=env_cfg.video_max_bitrate,
+            help="Target max video bitrate in bps (default: 3000000).",
+        )
+        parser.add_argument(
+            "--video-min-bitrate",
+            type=int,
+            default=env_cfg.video_min_bitrate,
+            help="Optional minimum video bitrate in bps.",
+        )
+        parser.add_argument(
+            "--video-preferred-codec",
+            default=env_cfg.video_preferred_codec or "",
+            help="Preferred video codec (e.g., H264, VP8).",
+        )
+        parser.add_argument(
+            "--video-input-format",
+            default=env_cfg.video_input_format or "",
+            help="FFmpeg input pixel format (e.g., mjpeg, yuyv422) for v4l2 sources.",
+        )
         video_toggle = parser.add_mutually_exclusive_group()
         video_toggle.add_argument(
             "--no-video",
@@ -279,6 +358,10 @@ class BroadcasterConfig:
             video_format=args.video_format.strip() or None,
             video_resolution=args.video_resolution,
             video_fps=args.video_fps,
+            video_max_bitrate=args.video_max_bitrate,
+            video_min_bitrate=args.video_min_bitrate,
+            video_preferred_codec=args.video_preferred_codec.strip() or None,
+            video_input_format=args.video_input_format.strip() or None,
             audio_enabled=args.audio_enabled,
             audio_device=audio_device,
             audio_format=args.audio_format.strip() or None,
@@ -380,7 +463,8 @@ class HeadlessBroadcaster:
         self._peers[viewer_id] = pc
 
         if self.config.video_enabled and self._video_player and self._video_player.video:
-            pc.addTrack(self._relay.subscribe(self._video_player.video))
+            video_sender = pc.addTrack(self._relay.subscribe(self._video_player.video))
+            self._configure_video_sender(video_sender, pc)
         if self.config.audio_enabled and self._audio_player and self._audio_player.audio:
             pc.addTrack(self._relay.subscribe(self._audio_player.audio))
 
@@ -476,6 +560,8 @@ class HeadlessBroadcaster:
                 video_options["video_size"] = self.config.video_resolution
             if self.config.video_fps:
                 video_options["framerate"] = str(self.config.video_fps)
+            if self.config.video_input_format:
+                video_options["input_format"] = self.config.video_input_format
             logging.info(
                 "Opening video device %s (format=%s, options=%s)",
                 self.config.video_device,
@@ -543,3 +629,53 @@ class HeadlessBroadcaster:
         peers = list(self._peers.keys())
         for viewer_id in peers:
             await self._close_peer(viewer_id)
+
+    def _configure_video_sender(
+        self, sender: RTCRtpSender, pc: RTCPeerConnection
+    ) -> None:
+        try:
+            params = sender.getParameters()
+        except Exception:
+            logging.debug("Unable to read sender parameters for video bitrate tuning")
+            return
+
+        if not params.encodings:
+            params.encodings = [{}]
+        encoding = params.encodings[0]
+        if self.config.video_max_bitrate:
+            encoding["maxBitrate"] = int(self.config.video_max_bitrate)
+        if self.config.video_min_bitrate:
+            encoding["minBitrate"] = int(self.config.video_min_bitrate)
+        if self.config.video_fps:
+            encoding["maxFramerate"] = int(self.config.video_fps)
+
+        try:
+            sender.setParameters(params)
+        except Exception:
+            logging.debug("Failed setting video sender parameters", exc_info=True)
+
+        if self.config.video_preferred_codec:
+            try:
+                codec_name = self.config.video_preferred_codec.lower()
+                capabilities = RTCRtpSender.getCapabilities("video")
+                preferred = [
+                    codec
+                    for codec in capabilities.codecs
+                    if codec_name in codec.mimeType.lower()
+                ]
+                if preferred:
+                    others = [
+                        codec for codec in capabilities.codecs if codec not in preferred
+                    ]
+                    transceiver = next(
+                        (t for t in pc.getTransceivers() if t.sender == sender),
+                        None,
+                    )
+                    if transceiver is not None:
+                        transceiver.setCodecPreferences(preferred + others)
+            except Exception:
+                logging.debug(
+                    "Failed applying preferred video codec %s",
+                    self.config.video_preferred_codec,
+                    exc_info=True,
+                )
