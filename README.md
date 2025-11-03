@@ -26,6 +26,7 @@ The Python analyzer connects as a viewer to classify movements and detect cries,
 - Multiple viewers on the same LAN
 - Full‑screen viewing
 - Pure web UI (Chrome recommended)
+- Headless CLI broadcaster for Raspberry Pi or any Linux machine (`python baby-motion-detector/run_broadcaster.py`)
 - Dockerized + compose
 - HTTPS out of the box (self‑signed, auto‑generated at runtime by Docker or locally)
 - No cloud: signaling and media stay on your LAN (WebRTC P2P)
@@ -158,6 +159,53 @@ docker compose up -d
 ### Customize SANs (IPs/hostnames) without editing files
 
 Provide a space‑separated list via `CERT_HOSTNAMES` at runtime; the init service will generate a cert covering all SANs if none exist yet:
+
+---
+
+## 🎥 Raspberry Pi Headless Broadcast
+
+Need to stream without a screen? Use the Python headless broadcaster. It captures a USB or CSI webcam + microphone via FFmpeg/libav and speaks WebRTC to the Node signaling server.
+
+1. Install system dependencies on the Pi (once):
+
+   ```bash
+   sudo apt update
+   sudo apt install ffmpeg v4l-utils libatlas3-base
+   ```
+
+   Make sure the camera is enabled (`sudo raspi-config`) and appears under `/dev/video*`. For USB microphones, run `arecord -l` to list ALSA devices.
+
+2. Create a virtualenv and install Python dependencies:
+
+   ```bash
+   cd baby-motion-detector
+   python -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt
+   ```
+
+3. Launch the broadcaster (adjust devices as needed):
+
+   ```bash
+   python run_broadcaster.py \
+     --signaling wss://<server>:3443/ws \
+     --room baby \
+     --no-ssl-verify \
+     --video-device /dev/video0 \
+     --video-format v4l2 \
+     --audio-device default \
+     --audio-format alsa
+   ```
+
+   Useful flags:
+
+   - `--video-resolution 1920x1080` or `--video-fps 25` to tune capture quality.
+   - `--audio-device hw:1,0` if ALSA exposes the mic with a numbered card/device.
+   - `--no-video` or `--no-audio` to disable a track (e.g., audio-only monitor).
+   - Environment variables (`BROADCASTER_*`) mirror every CLI flag for service files.
+   - On macOS (`ffmpeg` + `avfoundation`), set e.g. `--video-device "0:" --video-format avfoundation` and `--audio-device ":0" --audio-format avfoundation`.
+
+Once running, the CLI auto-reconnects to the signaling server and starts sending offers whenever a viewer opens `https://<server>:3443/viewer`. No browser is required on the Raspberry Pi.
 
 ```bash
 cd node-server

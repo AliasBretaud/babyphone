@@ -1,6 +1,9 @@
 # Baby Monitor Analyzer (Python)
 
-This Python client connects to the BabyPhone WebRTC server as a viewer, inspects the incoming audio/video tracks, and raises motion/cry events in real time with optional debug snapshots.
+This folder hosts two command-line companions for the BabyPhone project:
+
+- a **viewer/analyzer** that subscribes to the stream and detects events (motion, cries, posture),
+- a **headless broadcaster** able to publish video/audio from a Raspberry Pi or any Linux host with no GUI.
 
 > ℹ️ When MediaPipe is not available (e.g., Python 3.12+), the analyzer automatically falls back to an OpenCV-only backend. Motion detection still works, but posture classification (lying/sitting/standing) is disabled.
 
@@ -15,6 +18,7 @@ This Python client connects to the BabyPhone WebRTC server as a viewer, inspects
 - Wake-up detection by observing posture changes over time.
 - Optional annotated snapshots for debugging (MediaPipe backend only).
 - Structured logging for all detected events.
+- Headless broadcaster CLI that captures local video/audio and serves regular BabyPhone viewers.
 
 ---
 
@@ -40,6 +44,8 @@ This Python client connects to the BabyPhone WebRTC server as a viewer, inspects
 
 ## Usage
 
+### Analyzer (viewer)
+
 ```bash
 python run_analyzer.py \
   --signaling wss://localhost:3443/ws \
@@ -63,6 +69,27 @@ The script connects, waits for a broadcaster, consumes the media stream, and log
 
 > ℹ️ On first launch the MediaPipe Tasks model (`pose_landmarker_full.task`) is downloaded automatically into `baby-motion-detector/models/`. Provide your own model by setting the `POSE_MODEL_PATH` environment variable if needed.
 
+### Headless broadcaster
+
+```bash
+python run_broadcaster.py \
+  --signaling wss://localhost:3443/ws \
+  --room baby \
+  --no-ssl-verify \
+  --video-device /dev/video0 \
+  --video-format v4l2 \
+  --audio-device default
+```
+
+Notable options:
+
+- `--video-resolution 1920x1080` / `--video-fps 25` to change capture quality.
+- `--video-format avfoundation --video-device "0:"` on macOS (or use `:0` for audio) when using FFmpeg's avfoundation backend.
+- `--audio-device hw:1,0` for USB mics exposed by ALSA.
+- `--audio-format alsa` (Linux) or `--audio-format avfoundation` (macOS) to force a specific FFmpeg backend.
+- `--no-video` / `--no-audio` to disable a track entirely.
+- `BROADCASTER_*` environment variables mirror every CLI flag (documentation below).
+
 ---
 
 ## Architecture
@@ -70,10 +97,12 @@ The script connects, waits for a broadcaster, consumes the media stream, and log
 ```
 baby-motion-detector/
 ├── run_analyzer.py          # CLI entrypoint
+├── run_broadcaster.py       # Headless broadcaster CLI
 ├── requirements.txt
 └── baby_monitor/
     ├── __init__.py
     ├── analyzer.py          # WebRTC client + event loops
+    ├── broadcaster.py       # Headless WebRTC broadcaster
     ├── audio.py             # Cry detection + optional recording
     ├── config.py            # CLI/env configuration loader
     ├── pose.py              # Pose analysis (MediaPipe or OpenCV fallback)
@@ -100,7 +129,9 @@ baby-motion-detector/
 
 ## Environment Variables
 
-Every CLI flag has an environment counterpart:
+### Analyzer (viewer)
+
+Every analyzer flag has an environment counterpart:
 
 | Variable                    | Description                                 | Default value                          |
 |----------------------------|---------------------------------------------|----------------------------------------|
@@ -112,6 +143,25 @@ Every CLI flag has an environment counterpart:
 | `ANALYZER_SNAPSHOT_ON_EVENT` | `true` / `false` to capture annotated shots | `false`                                |
 | `ANALYZER_SNAPSHOT_DIR`    | Snapshot output directory                    | `baby-motion-detector/output/snapshots`|
 | `POSE_MODEL_PATH`          | Custom `.task` model path (optional)         | auto-download                          |
+
+### Headless broadcaster
+
+| Variable                         | Description                                      | Default value                 |
+|----------------------------------|--------------------------------------------------|-------------------------------|
+| `BROADCASTER_SIGNALING`          | WebSocket signaling URL                           | `wss://localhost:3443/ws`     |
+| `BROADCASTER_ROOM`               | Room to join                                      | `baby`                        |
+| `BROADCASTER_STUN`               | Comma-separated list of STUN servers             | `stun:stun.l.google.com:19302`|
+| `BROADCASTER_SSL_VERIFY`         | `true`/`false` to enable strict TLS               | `false`                       |
+| `BROADCASTER_VIDEO_DEVICE`       | FFmpeg input for the camera                       | Linux: `/dev/video0`, otherwise unset |
+| `BROADCASTER_VIDEO_FORMAT`       | FFmpeg format for the camera                      | Linux: `v4l2`, otherwise unset        |
+| `BROADCASTER_VIDEO_RESOLUTION`   | Capture resolution `WIDTHxHEIGHT`                 | `1280x720`                    |
+| `BROADCASTER_VIDEO_FPS`          | Capture frame rate                                | `30`                          |
+| `BROADCASTER_VIDEO_ENABLED`      | `true`/`false` to toggle video capture            | `true`                        |
+| `BROADCASTER_AUDIO_DEVICE`       | FFmpeg input for the microphone                   | Linux: `default`, otherwise unset     |
+| `BROADCASTER_AUDIO_FORMAT`       | FFmpeg format for the mic                         | Linux: `alsa`, otherwise unset        |
+| `BROADCASTER_AUDIO_SAMPLE_RATE`  | Audio sample rate in Hz                           | `48000`                       |
+| `BROADCASTER_AUDIO_CHANNELS`     | Number of audio channels                          | `1`                           |
+| `BROADCASTER_AUDIO_ENABLED`      | `true`/`false` to toggle audio capture            | `true`                        |
 
 ---
 
