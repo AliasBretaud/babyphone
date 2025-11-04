@@ -55,7 +55,15 @@ wss.on('connection', (ws) => {
       if (role === 'viewer') r.broadcasters.forEach(bws => safeSend(bws, { type: 'viewer-joined', viewerId: ws.meta.id }));
       return;
     }
-    if (type === 'offer' || type === 'answer' || type === 'candidate') {
+    if (
+      type === 'offer' ||
+      type === 'answer' ||
+      type === 'candidate' ||
+      type === 'shutdown' ||
+      type === 'shutdown-ack' ||
+      type === 'shutdown-denied' ||
+      type === 'shutdown-error'
+    ) {
       const r = getRoom(ws.meta.room); if(!r) return;
       const targets = new Set();
       if (msg.targetId) { [...r.broadcasters, ...r.viewers].forEach(p => p.meta?.id===msg.targetId && targets.add(p)); }
