@@ -85,13 +85,13 @@ Notable options:
 
 - `--video-resolution 1920x1080` / `--video-fps 25` to change capture quality.
 - `--video-format avfoundation --video-device "0:"` on macOS (or use `:0` for audio) when using FFmpeg's avfoundation backend.
-- `--video-max-bitrate 4000000` (ou plus) pour augmenter la netteté, `--video-min-bitrate` pour garantir un plancher, `--video-preferred-codec H264` pour prioriser un codec spécifique (si disponible dans FFmpeg/PyAV), `--video-input-format mjpeg` pour forcer un flux MJPEG matériel via v4l2.
+- `--video-max-bitrate 4000000` (or higher) to improve sharpness, `--video-min-bitrate` to enforce a floor, `--video-preferred-codec H264` to prioritize a specific codec (when available in FFmpeg/PyAV), `--video-input-format mjpeg` to force a hardware MJPEG stream via v4l2.
 - `--audio-device hw:1,0` for USB mics exposed by ALSA.
 - `--audio-format alsa` (Linux) or `--audio-format avfoundation` (macOS) to force a specific FFmpeg backend.
-- `--audio-gain-db 10`, `--audio-noise-gate-db -50`, `--audio-highpass 120`, `--audio-lowpass 6000`, `--audio-denoise --audio-denoise-floor -32` pour réduire le souffle/ventilateur, et `--allow-remote-shutdown` pour autoriser l'arrêt distant via la page Viewer.
+- `--audio-gain-db 10`, `--audio-noise-gate-db -50`, `--audio-highpass 120`, `--audio-lowpass 6000`, `--audio-denoise --audio-denoise-floor -32` to cut hiss/fan noise, and `--allow-remote-shutdown` to authorize remote shutdown from the Viewer page.
 - `--no-video` / `--no-audio` to disable a track entirely.
 - `BROADCASTER_*` environment variables mirror every CLI flag (documentation below).
-- Sur Raspberry Pi, vérifie les périphériques avec `arecord -L` et passe un nom explicite (`plughw:CARD=Device,DEV=0`, `sysdefault:CARD=Device`, etc.). Le script positionne automatiquement `ALSA_CONFIG_PATH` vers `/usr/share/alsa/alsa.conf` si nécessaire pour éviter l’erreur `Cannot access file /tmp/vendor/share/alsa/alsa.conf`.
+- On Raspberry Pi, list devices with `arecord -L` and provide an explicit name (`plughw:CARD=Device,DEV=0`, `sysdefault:CARD=Device`, etc.). The script automatically points `ALSA_CONFIG_PATH` to `/usr/share/alsa/alsa.conf` when needed to avoid the `Cannot access file /tmp/vendor/share/alsa/alsa.conf` error.
 
 ---
 
