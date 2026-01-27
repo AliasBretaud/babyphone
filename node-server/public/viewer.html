@@ -11,20 +11,34 @@
     <div>👶 BabyPhone <span class="badge">Viewer</span></div>
     <a class="btn secondary" href="/">Home</a>
   </header>
-  <main class="wrap">
-    <div class="card">
-      <div class="grid">
-        <button id="joinBtn" class="btn">Join</button>
-        <button id="leaveBtn" class="btn secondary" disabled>Leave</button>
-        <button id="shutdownBtn" class="btn danger">Shutdown Pi</button>
-      </div>
-
-      <div class="container" style="margin-top:12px;">
-        <video id="remote" autoplay playsinline></video>
-        <div id="playOverlay" class="overlay"><button id="playBtn" class="btn">Play</button></div>
-        <button id="fsBtn" class="btn fullscreen-btn">Fullscreen</button>
-      </div>
-      <p id="viewerError" class="status error hidden" aria-live="polite"></p>
+  <main>
+    <div class="viewer-layout">
+      <section class="viewer-main card">
+        <div class="control-row">
+          <button id="joinBtn" class="btn">Join</button>
+          <button id="leaveBtn" class="btn secondary" disabled>Leave</button>
+          <button id="shutdownBtn" class="btn danger">Shutdown Pi</button>
+        </div>
+        <div class="video-shell">
+          <video id="remote" autoplay playsinline></video>
+          <div id="playOverlay" class="overlay"><button id="playBtn" class="btn">Play</button></div>
+          <button id="fsBtn" class="btn secondary fullscreen-btn">Fullscreen</button>
+        </div>
+        <p id="viewerError" class="status error hidden" aria-live="polite"></p>
+      </section>
+      <aside class="viewer-sidebar">
+        <div class="card chat-card">
+          <div class="chat-header">
+            <h2>Activity Feed</h2>
+            <span class="chat-subtitle">Live baby events</span>
+          </div>
+          <ul id="eventFeed" class="chat-feed" aria-live="polite" aria-atomic="false">
+            <li class="chat-entry chat-entry--empty" data-placeholder>
+              Waiting for motion or cry events…
+            </li>
+          </ul>
+        </div>
+      </aside>
     </div>
   </main>
   <script src="/client.js"></script>

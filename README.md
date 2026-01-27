@@ -25,6 +25,7 @@ The Python analyzer connects as a viewer to classify movements and detect cries,
 - One‑directional A/V (no return audio/video from viewers)
 - Multiple viewers on the same LAN
 - Full‑screen viewing
+- Twitch-style desktop viewer with live activity feed (movement/cry/awake)
 - Pure web UI (Chrome recommended)
 - Headless CLI broadcaster for Raspberry Pi or any Linux machine (`python baby-motion-detector/run_broadcaster.py`)
 - Dockerized + compose

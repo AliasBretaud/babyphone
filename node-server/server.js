@@ -42,6 +42,7 @@ wss.on("connection", (ws) => {
     } catch {
       return;
     }
+    console.log("msg", msg);
     const { type } = msg;
 
     if (type === "join") {
@@ -55,6 +56,32 @@ wss.on("connection", (ws) => {
         r.broadcasters.forEach((bws) =>
           safeSend(bws, { type: "viewer-joined", viewerId: ws.meta.id })
         );
+      return;
+    }
+
+    if (type === "event-log") {
+      const r = getRoom(ws.meta.room);
+      console.log("room", r);
+      if (!r) return;
+      const payload = {
+        type: "event-log",
+        event: msg.event || {},
+        fromId: ws.meta.id,
+      };
+      let delivered = 0;
+      const peers = new Set([...r.viewers, ...r.broadcasters]);
+      peers.forEach((peer) => {
+        if (peer !== ws) {
+          safeSend(peer, payload);
+          delivered += 1;
+        }
+      });
+      if (delivered === 0) {
+        safeSend(ws, payload);
+      }
+      console.log(
+        `[event-log] from=${ws.meta.id} room=${ws.meta.room} delivered=${delivered}`
+      );
       return;
     }
 

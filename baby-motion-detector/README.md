@@ -2,10 +2,10 @@
 
 This folder hosts two command-line companions for the BabyPhone project:
 
-- a **viewer/analyzer** that subscribes to the stream and detects events (motion, cries, posture),
+- a **viewer/analyzer** that subscribes to the stream and detects events (motion bursts, sustained movement, cries),
 - a **headless broadcaster** able to publish video/audio from a Raspberry Pi or any Linux host with no GUI.
 
-> ℹ️ When MediaPipe is not available (e.g., Python 3.12+), the analyzer automatically falls back to an OpenCV-only backend. Motion detection still works, but posture classification (lying/sitting/standing) is disabled.
+> ℹ️ When MediaPipe is not available (e.g., Python 3.12+), the analyzer automatically falls back to an OpenCV-only backend. Motion detection still works, but landmark overlays and snapshots are disabled.
 
 ---
 
@@ -13,10 +13,10 @@ This folder hosts two command-line companions for the BabyPhone project:
 
 - Stand-alone WebRTC viewer powered by `aiortc`.
 - WebSocket signaling with optional TLS verification bypass for self-signed certificates.
-- Pose understanding through MediaPipe Pose (lying vs sitting vs standing) when available.
+- MediaPipe-driven motion scoring with optional skeleton snapshots (when available).
 - Cry detection powered by simple spectral heuristics.
-- Wake-up detection by observing posture changes over time.
-- Optional annotated snapshots for debugging (MediaPipe backend only).
+- Wake-up inference based on sustained motion over a 5-second window.
+- Real-time movement/cry/awake events pushed to the web viewer activity feed.
 - Structured logging for all detected events.
 - Headless broadcaster CLI that captures local video/audio and serves regular BabyPhone viewers.
 
@@ -62,10 +62,10 @@ Key arguments:
 - `--ssl-verify/--no-ssl-verify`: toggle strict TLS verification (keep disabled for self-signed certs).
 - `--audio-dir`: output folder for recorded WAV files (default `baby-motion-detector/output/audio`, created on demand).
 - `--record-audio / --no-record-audio`: enable/disable audio recording (off by default).
-- `--snapshots / --no-snapshots`: enable annotated snapshots for every detected motion/wake event.
+- `--snapshots / --no-snapshots`: enable annotated snapshots for every detected movement/awake event.
 - `--snapshot-dir`: directory for snapshots (default `baby-motion-detector/output/snapshots`).
 
-The script connects, waits for a broadcaster, consumes the media stream, and logs detected events (cry, movement, wake). When `--record-audio` is enabled, files like `baby-motion-detector/output/audio/baby_audio_<timestamp>.wav` are written. When `--snapshots` is enabled and MediaPipe is available, each event produces an annotated image in `snapshot-dir`. The fallback backend skips posture and snapshots but still reports motion.
+The script connects, waits for a broadcaster, consumes the media stream, and logs detected events (cry, movement, awake). When `--record-audio` is enabled, files like `baby-motion-detector/output/audio/baby_audio_<timestamp>.wav` are written. When `--snapshots` is enabled and MediaPipe is available, each event produces an annotated image in `snapshot-dir`. The fallback backend skips landmark overlays and snapshots but still reports motion.
 
 > ℹ️ On first launch the MediaPipe Tasks model (`pose_landmarker_full.task`) is downloaded automatically into `baby-motion-detector/models/`. Provide your own model by setting the `POSE_MODEL_PATH` environment variable if needed.
 
@@ -115,13 +115,13 @@ baby-motion-detector/
 ### Video pipeline (MediaPipe backend)
 1. Receive frames via `aiortc`.
 2. Run MediaPipe Pose to obtain 3D landmarks.
-3. Classify posture (lying/sitting/standing) using heuristic rules.
-4. Detect movement by comparing landmark deltas.
+3. Estimate motion magnitude from landmark deltas.
+4. Track continuous movement streaks to decide awake events and drive snapshots.
 
 ### Video pipeline (fallback backend)
 1. Receive frames via `aiortc`.
 2. Apply frame differencing + smoothing to estimate motion level.
-3. Emit motion events without posture labels.
+3. Emit motion events and sustained-movement alerts (no snapshots).
 
 ### Audio pipeline
 1. Convert PCM frames to mono 16-bit samples.
@@ -183,8 +183,8 @@ Every analyzer flag has an environment counterpart:
 
 - Motion/pose heuristics may need adjustments depending on camera angle and lighting.
 - For more accurate crying detection, plug in a dedicated ML model or cloud service.
-- Consider adding notifications (email, push) when wake/cry events occur.
-- Fallback backend currently provides motion-only insights; posture would require a different on-device model.
+- Consider adding notifications (email, push) when awake/cry events occur.
+- Fallback backend currently provides motion-only insights; annotated snapshots require MediaPipe landmarks.
 
 ---
 

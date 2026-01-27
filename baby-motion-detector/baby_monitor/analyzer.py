@@ -39,7 +39,6 @@ class AnalyzerClient:
         self._audio_analyzer = AudioAnalyzer(
             config.audio_output_dir, record_audio=config.record_audio
         )
-        self._current_posture: Optional[str] = None
         self._rejoin_lock = asyncio.Lock()
         self._stop_requested = False
         self._snapshot_enabled = config.snapshot_on_event
@@ -51,9 +50,10 @@ class AnalyzerClient:
         self._last_event_label: Optional[str] = None
         self._last_event_ts: float = 0.0
         self._last_movement_event_ts: float = 0.0
-        self._wake_candidate_posture: Optional[str] = None
-        self._wake_candidate_since: float = 0.0
-        self._wake_min_duration = 3.0
+        self._movement_streak_start: Optional[float] = None
+        self._movement_awake_threshold = 5.0
+        self._movement_last_seen: float = 0.0
+        self._movement_gap_tolerance = 1.0
         self._is_awake: bool = False
         self._current_broadcaster_id: Optional[str] = None
         self._reconnect_max_attempts = 5
@@ -302,12 +302,19 @@ class AnalyzerClient:
                 logging.exception("Pose analysis error")
                 continue
             if not observation:
+                self._movement_streak_start = None
+                self._movement_last_seen = 0.0
+                self._is_awake = False
                 continue
 
             events = self._handle_pose_observation(observation)
-            if self._snapshot_enabled and events:
+            if not events:
+                continue
+            if self._snapshot_enabled:
                 for event in events:
                     self._save_snapshot(frame_bgr, observation, event)
+            for event in events:
+                await self._publish_event(event)
 
     async def _consume_audio(self, track) -> None:
         frame_count = 0
@@ -337,94 +344,90 @@ class AnalyzerClient:
                 logging.exception("Audio analysis error")
                 continue
             if event:
-                logging.info(
-                    "Cry detected – energy %.3f, ratio %.2f",
-                    event.energy,
-                    event.ratio_mid_band,
-                )
+                now = event.timestamp
+                trace_id = uuid.uuid4().hex[:8]
+                payload = {
+                    "trace_id": trace_id,
+                    "label": "cry",
+                    "description": "cry detected",
+                    "extras": {
+                        "energy": event.energy,
+                        "ratio_mid_band": event.ratio_mid_band,
+                    },
+                }
+                if self._register_event(payload, now):
+                    logging.info(
+                        "Trace %s – Cry detected (energy=%.3f, ratio=%.2f)",
+                        trace_id,
+                        event.energy,
+                        event.ratio_mid_band,
+                    )
+                    await self._publish_event(payload)
 
     def _handle_pose_observation(self, observation) -> list[dict]:
         events: list[dict] = []
-        posture = observation.posture
         now = time.time()
-        extras = observation.extras or {}
-        torso_angle = extras.get("torso_angle")
-        avg_knee = extras.get("avg_knee_angle")
-        leg_ext = extras.get("leg_extension")
-        torso_text = (
-            f"torso={torso_angle:.1f}°" if torso_angle is not None else "torso=n/a"
-        )
-        knee_text = f"{avg_knee:.1f}°" if avg_knee is not None else "n/a"
-        leg_text = f"{leg_ext:.2f}" if leg_ext is not None else "n/a"
+        score = observation.movement_score
 
-        # Movement detection with cooldown
         if observation.movement_detected and (
             now - self._last_movement_event_ts
         ) >= self._movement_cooldown:
             trace_id = uuid.uuid4().hex[:8]
             logging.info(
-                "Trace %s – Movement detected (score=%.3f, posture=%s, %s, knee=%s, leg=%s)",
+                "Trace %s – Movement detected (score=%.3f)",
                 trace_id,
-                observation.movement_score,
-                posture,
-                torso_text,
-                knee_text,
-                leg_text,
+                score,
             )
             payload = {
                 "trace_id": trace_id,
                 "label": "movement",
-                "description": "movement",
+                "description": "movement detected",
                 "extras": {
-                    **extras,
-                    "movement_score": observation.movement_score,
-                    "posture": posture,
+                    "movement_score": score,
                 },
             }
             if self._register_event(payload, now):
                 events.append(payload)
                 self._last_movement_event_ts = now
 
-        # Wake detection (sitting or standing maintained for >= 3s)
-        if posture in {"sitting", "standing"}:
-            if self._is_awake:
-                self._wake_candidate_posture = None
-            else:
-                if self._wake_candidate_posture != posture:
-                    self._wake_candidate_posture = posture
-                    self._wake_candidate_since = now
-                elif (now - self._wake_candidate_since) >= self._wake_min_duration:
-                    trace_id = uuid.uuid4().hex[:8]
-                    duration = now - self._wake_candidate_since
-                    logging.info(
-                        "Trace %s – Wake detected (posture=%s, duration=%.1fs, %s, knee=%s, leg=%s)",
-                        trace_id,
-                        posture,
-                        duration,
-                        torso_text,
-                        knee_text,
-                        leg_text,
-                    )
-                    payload = {
-                        "trace_id": trace_id,
-                        "label": "wake",
-                        "description": f"wake ({posture})",
-                        "extras": {
-                            **extras,
-                            "posture": posture,
-                            "duration": duration,
-                        },
-                    }
-                    if self._register_event(payload, now):
-                        events.append(payload)
-                        self._is_awake = True
-                        self._wake_candidate_posture = None
+        movement_active = observation.movement_detected
+        if movement_active:
+            if self._movement_streak_start is None:
+                self._movement_streak_start = now
+            self._movement_last_seen = now
         else:
-            self._wake_candidate_posture = None
-            self._wake_candidate_since = 0.0
-            self._is_awake = False
+            if self._movement_last_seen and (
+                now - self._movement_last_seen
+            ) <= self._movement_gap_tolerance:
+                movement_active = True
+            else:
+                self._movement_streak_start = None
+                if self._is_awake:
+                    self._is_awake = False
 
-        self._current_posture = posture
+        if movement_active and self._movement_streak_start is not None:
+            streak_duration = now - self._movement_streak_start
+            if streak_duration >= self._movement_awake_threshold and not self._is_awake:
+                trace_id = uuid.uuid4().hex[:8]
+                logging.info(
+                    "Trace %s – Continuous movement for %.1fs, baby likely awake",
+                    trace_id,
+                    streak_duration,
+                )
+                payload = {
+                    "trace_id": trace_id,
+                    "label": "awake",
+                    "description": "continuous movement (awake)",
+                    "extras": {
+                        "movement_score": score,
+                        "movement_streak_seconds": streak_duration,
+                    },
+                }
+                if self._register_event(payload, now):
+                    events.append(payload)
+                    self._is_awake = True
+        elif not movement_active:
+            self._movement_last_seen = 0.0
         return events
 
     async def _reset(self) -> None:
@@ -441,7 +444,9 @@ class AnalyzerClient:
         if self._pc:
             await self._pc.close()
             self._pc = None
-        self._current_posture = None
+        self._movement_streak_start = None
+        self._movement_last_seen = 0.0
+        self._is_awake = False
         self._audio_analyzer.close()
         self._current_broadcaster_id = None
         logging.info("Client state reset.")
@@ -484,7 +489,7 @@ class AnalyzerClient:
                 if attempt < self._reconnect_max_attempts:
                     await asyncio.sleep(self._reconnect_interval)
             logging.error(
-                "Impossible de rétablir la connexion après %d tentatives (%s)",
+                "Failed to re-establish the connection after %d attempts (%s)",
                 self._reconnect_max_attempts,
                 reason,
             )
@@ -536,4 +541,20 @@ class AnalyzerClient:
         self._last_event_label = label
         self._last_event_ts = timestamp
         event.setdefault("extras", {})["event_timestamp"] = timestamp
+        event["timestamp"] = timestamp
         return True
+
+    async def _publish_event(self, event: dict) -> None:
+        ws = self._ws
+        if ws is None:
+            return
+        message = {"type": "event-log", "event": event}
+        try:
+            await ws.send(json.dumps(message))
+            logging.info(
+                "Event pushed to WS (label=%s, trace=%s)",
+                event.get("label"),
+                event.get("trace_id"),
+            )
+        except Exception:
+            logging.debug("Failed to publish analyzer event", exc_info=True)

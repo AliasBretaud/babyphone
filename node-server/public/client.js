@@ -221,6 +221,33 @@
       this.currentBroadcasterId = null;
       this.shutdownButton = null;
       this.awaitingShutdownAck = false;
+      this.feedEl = qs("eventFeed");
+      this.feedPlaceholder =
+        this.feedEl && this.feedEl.querySelector("[data-placeholder]");
+      this.maxFeedItems = 100;
+      this.timeFormatter =
+        typeof Intl !== "undefined" && Intl.DateTimeFormat
+          ? new Intl.DateTimeFormat(undefined, {
+              hour: "2-digit",
+              minute: "2-digit",
+            })
+          : null;
+      this.speech = {
+        enabled: typeof window !== "undefined" && "speechSynthesis" in window,
+        voice: null,
+        queue: [],
+      };
+      if (this.speech.enabled) {
+        const handleVoicesChanged = () => {
+          this._selectSpeechVoice();
+          this._flushSpeechQueue();
+        };
+        window.speechSynthesis.addEventListener(
+          "voiceschanged",
+          handleVoicesChanged
+        );
+        this._selectSpeechVoice();
+      }
     }
 
     async join(room) {
@@ -425,6 +452,8 @@
         alert(
           "Le diffuseur n'a pas pu exécuter la commande d'arrêt (voir les logs)."
         );
+      } else if (msg.type === "event-log") {
+        this._handleAnalyzerEvent(msg.event);
       }
     }
 
@@ -469,6 +498,187 @@
           button.disabled = false;
         }
       };
+    }
+
+    _handleAnalyzerEvent(event) {
+      if (!event || typeof event !== "object") {
+        console.debug("[viewer] Ignored analyzer event (invalid)", event);
+        return;
+      }
+      console.debug("[viewer] Analyzer event received", event);
+      this._appendFeedEvent(event);
+    }
+
+    _appendFeedEvent(event) {
+      if (!this.feedEl) return;
+      if (this.feedPlaceholder) {
+        this.feedPlaceholder.remove();
+        this.feedPlaceholder = null;
+      }
+      const label = typeof event.label === "string" ? event.label.toLowerCase() : "";
+      const li = document.createElement("li");
+      li.className = "chat-entry";
+      if (label === "awake") li.classList.add("chat-entry--awake");
+      else if (label === "cry") li.classList.add("chat-entry--cry");
+      else li.classList.add("chat-entry--movement");
+
+      const meta = document.createElement("div");
+      meta.className = "chat-entry__meta";
+      meta.textContent = `${this._formatEventTime(event.timestamp)} • ${this._labelForEvent(label)}`;
+      li.appendChild(meta);
+
+      const message = document.createElement("div");
+      message.className = "chat-entry__message";
+      message.textContent = this._messageForEvent(label, event.description);
+      li.appendChild(message);
+
+      const detailText = this._detailTextForEvent(event);
+      if (detailText) {
+        const details = document.createElement("div");
+        details.className = "chat-entry__details";
+        details.textContent = detailText;
+        li.appendChild(details);
+      }
+
+      if (event.trace_id) {
+        li.dataset.trace = String(event.trace_id);
+      }
+
+      this.feedEl.appendChild(li);
+      while (this.feedEl.children.length > this.maxFeedItems) {
+        this.feedEl.removeChild(this.feedEl.firstChild);
+      }
+      this.feedEl.scrollTop = this.feedEl.scrollHeight;
+      console.debug("[viewer] Feed updated with", label, event);
+      if (label === "cry" || label === "awake") {
+        this._speakNotification("ハムハムがおきてるでござる");
+      }
+    }
+
+    _formatEventTime(timestamp) {
+      const ms =
+        typeof timestamp === "number" && Number.isFinite(timestamp)
+          ? timestamp * 1000
+          : Date.now();
+      if (this.timeFormatter) {
+        return this.timeFormatter.format(new Date(ms));
+      }
+      const date = new Date(ms);
+      const hours = date.getHours().toString().padStart(2, "0");
+      const minutes = date.getMinutes().toString().padStart(2, "0");
+      return `${hours}:${minutes}`;
+    }
+
+    _labelForEvent(label) {
+      switch (label) {
+        case "cry":
+          return "Cry";
+        case "awake":
+          return "Awake";
+        case "movement":
+          return "Movement";
+        default:
+          return "Event";
+      }
+    }
+
+    _messageForEvent(label, description) {
+      if (label === "awake") {
+        return "Baby is awake!";
+      }
+      if (label === "cry") {
+        return "Baby is crying";
+      }
+      if (label === "movement") {
+        return "Movement detected";
+      }
+      if (description && typeof description === "string") {
+        return description.charAt(0).toUpperCase() + description.slice(1);
+      }
+      return "Activity detected";
+    }
+
+    _detailTextForEvent(event) {
+      const extras =
+        event && typeof event === "object" && event.extras
+          ? event.extras
+          : {};
+      const parts = [];
+      const score = extras.movement_score;
+      if (typeof score === "number" && Number.isFinite(score)) {
+        parts.push(`score ${score.toFixed(3)}`);
+      }
+      const streak = extras.movement_streak_seconds;
+      if (typeof streak === "number" && Number.isFinite(streak)) {
+        parts.push(`streak ${streak.toFixed(1)}s`);
+      }
+      const energy = extras.energy;
+      if (typeof energy === "number" && Number.isFinite(energy)) {
+        parts.push(`energy ${energy.toFixed(3)}`);
+      }
+      const ratio = extras.ratio_mid_band;
+      if (typeof ratio === "number" && Number.isFinite(ratio)) {
+        parts.push(`ratio ${ratio.toFixed(2)}`);
+      }
+      return parts.join(" · ");
+    }
+
+    _selectSpeechVoice() {
+      if (!this.speech.enabled) return;
+      const voices = window.speechSynthesis.getVoices() || [];
+      if (!voices.length) {
+        this.speech.voice = null;
+        console.debug("[viewer] speech: no voices available yet");
+        return;
+      }
+      const googleJapanese = voices.find(
+        (voice) => voice.voiceURI === "Google 日本語"
+      );
+      const kyoko = voices.find(
+        (voice) =>
+          voice.voiceURI === "urn:moz-tts:osx:com.apple.voice.compact.ja-JP.Kyoko"
+      );
+      const fallback = voices.find(
+        (voice) => voice.lang && voice.lang.toLowerCase().startsWith("ja")
+      );
+      this.speech.voice = googleJapanese || kyoko || fallback || null;
+      console.debug(
+        "[viewer] speech: voice selected",
+        this.speech.voice ? this.speech.voice.voiceURI : "none"
+      );
+    }
+
+    _flushSpeechQueue() {
+      if (!this.speech.enabled) return;
+      if (!this.speech.voice) return;
+      const synth = window.speechSynthesis;
+      while (this.speech.queue.length) {
+        const text = this.speech.queue.shift();
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.voice = this.speech.voice;
+        synth.speak(utterance);
+        console.debug("[viewer] speech: queued utterance played", text);
+      }
+    }
+
+    _speakNotification(text) {
+      if (!this.speech.enabled || !text) return;
+      if (!this.speech.voice) {
+        this.speech.queue.push(text);
+        this._selectSpeechVoice();
+        if (this.speech.voice) {
+          this._flushSpeechQueue();
+        } else {
+          return;
+        }
+      }
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.voice = this.speech.voice;
+      try {
+        window.speechSynthesis.speak(utterance);
+      } catch (err) {
+        console.warn("Unable to play speech notification:", err);
+      }
     }
   }
 
