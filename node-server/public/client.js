@@ -218,6 +218,12 @@
       this.maxRetries = 5;
       this.retryTimer = null;
       this.retryAttempts = 0;
+      this.streamHealthTimer = null;
+      this.streamHealthIntervalMs = 2000;
+      this.streamStallThresholdMs = 8000;
+      this.lastVideoBytes = null;
+      this.lastVideoFrames = null;
+      this.lastVideoProgressAt = 0;
       this.currentBroadcasterId = null;
       this.shutdownButton = null;
       this.awaitingShutdownAck = false;
@@ -264,6 +270,7 @@
     leave() {
       this.active = false;
       this._stopRetry();
+      this._stopStreamHealthCheck();
       this.currentBroadcasterId = null;
       this.ws?.close();
       this.pc?.close();
@@ -306,6 +313,7 @@
       }
       const pc = new RTCPeerConnection({ iceServers: ICE });
       this.pc = pc;
+      this._resetStreamHealthState();
       if (this.remoteVideo) {
         this.remoteVideo.srcObject = null;
       }
@@ -334,6 +342,7 @@
       };
       pc.addTransceiver("video", { direction: "recvonly" });
       pc.addTransceiver("audio", { direction: "recvonly" });
+      this._startStreamHealthCheck();
     }
 
     _handleStreamInterrupted(reason) {
@@ -394,6 +403,85 @@
         this.shutdownButton.disabled = false;
         this.awaitingShutdownAck = false;
       }
+    }
+
+    _resetStreamHealthState() {
+      this.lastVideoBytes = null;
+      this.lastVideoFrames = null;
+      this.lastVideoProgressAt = Date.now();
+    }
+
+    _startStreamHealthCheck() {
+      this._stopStreamHealthCheck();
+      this.streamHealthTimer = setInterval(
+        () => this._checkRemoteStreamHealth(),
+        this.streamHealthIntervalMs
+      );
+    }
+
+    _stopStreamHealthCheck() {
+      if (this.streamHealthTimer) {
+        clearInterval(this.streamHealthTimer);
+        this.streamHealthTimer = null;
+      }
+    }
+
+    async _checkRemoteStreamHealth() {
+      if (!this.active || !this.pc || this.retryTimer) {
+        return;
+      }
+      if (this.pc.connectionState !== "connected") {
+        return;
+      }
+      let stats;
+      try {
+        stats = await this.pc.getStats();
+      } catch {
+        return;
+      }
+      let inboundVideo = null;
+      stats.forEach((report) => {
+        if (
+          !inboundVideo &&
+          report.type === "inbound-rtp" &&
+          report.kind === "video"
+        ) {
+          inboundVideo = report;
+        }
+      });
+      if (!inboundVideo) return;
+
+      const now = Date.now();
+      const bytes = Number.isFinite(inboundVideo.bytesReceived)
+        ? inboundVideo.bytesReceived
+        : null;
+      const frames = Number.isFinite(inboundVideo.framesDecoded)
+        ? inboundVideo.framesDecoded
+        : null;
+
+      if (this.lastVideoBytes === null && this.lastVideoFrames === null) {
+        this.lastVideoBytes = bytes;
+        this.lastVideoFrames = frames;
+        this.lastVideoProgressAt = now;
+        return;
+      }
+
+      const bytesProgress =
+        bytes !== null && this.lastVideoBytes !== null && bytes > this.lastVideoBytes;
+      const framesProgress =
+        frames !== null &&
+        this.lastVideoFrames !== null &&
+        frames > this.lastVideoFrames;
+
+      if (bytesProgress || framesProgress) {
+        this.lastVideoProgressAt = now;
+      } else if (now - this.lastVideoProgressAt >= this.streamStallThresholdMs) {
+        this._handleStreamInterrupted("flux vidéo figé");
+        return;
+      }
+
+      this.lastVideoBytes = bytes;
+      this.lastVideoFrames = frames;
     }
 
     onWS(msg) {
